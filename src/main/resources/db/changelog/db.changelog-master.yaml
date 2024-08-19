@@ -1,0 +1,236 @@
+databaseChangeLog:
+  - changeSet:
+      id: 1
+      author: Alexandr
+      changes:
+        - createTable:
+            tableName: roles
+            columns:
+              - column:
+                  name: id
+                  type: serial
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: name
+                  type: varchar(60)
+                  constraints:
+                    nullable: false
+
+  - changeSet:
+      id: 2
+      author: Alexandr
+      changes:
+        - createTable:
+            tableName: users
+            columns:
+              - column:
+                  name: id
+                  type: serial
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: name
+                  type: varchar(255)
+              - column:
+                  name: username
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+                    unique: true
+              - column:
+                  name: email
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+                    unique: true
+              - column:
+                  name: password
+                  type: varchar(255)
+
+  - changeSet:
+      id: 3
+      author: Alexandr
+      changes:
+        - createTable:
+            tableName: user_roles
+            columns:
+              - column:
+                  name: user_id
+                  type: bigint
+              - column:
+                  name: role_id
+                  type: bigint
+            constraints:
+              primaryKey:
+                columns: [ user_id, role_id ]
+            foreignKeyConstraints:
+              - foreignKeyName: fk_user
+                baseTableName: user_roles
+                baseColumnNames: user_id
+                referencedTableName: users
+                referencedColumnNames: id
+              - foreignKeyName: fk_role
+                baseTableName: user_roles
+                baseColumnNames: role_id
+                referencedTableName: roles
+                referencedColumnNames: id
+
+  - changeSet:
+      id: 4
+      author: Alexandr
+      changes:
+        - createTable:
+            tableName: poems
+            columns:
+              - column:
+                  name: id
+                  type: serial
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: title
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: content
+                  type: text
+                  constraints:
+                    nullable: false
+              - column:
+                  name: author_id
+                  type: bigint
+                  constraints:
+                    nullable: false
+            foreignKeyConstraints:
+              - foreignKeyName: fk_author
+                baseTableName: poems
+                baseColumnNames: author_id
+                referencedTableName: users
+                referencedColumnNames: id
+
+  - changeSet:
+      id: 5
+      author: Alexandr
+      changes:
+        - insert:
+            tableName: roles
+            columns:
+              - column:
+                  name: name
+                  value: 'ADMIN'
+              - column:
+                  name: name
+                  value: 'POET'
+
+  - changeSet:
+      id: 6
+      author: Alexandr
+      changes:
+        - insert:
+            tableName: users
+            columns:
+              - column:
+                  name: name
+                  value: 'Александр М'
+              - column:
+                  name: username
+                  value: 'alexAlone'
+              - column:
+                  name: email
+                  value: 'alexAlone@mail.ru'
+              - column:
+                  name: password
+                  value: 'пароль1'
+        - insert:
+            tableName: users
+            columns:
+              - column:
+                  name: name
+                  value: 'Мария М'
+              - column:
+                  name: username
+                  value: 'mariaFirst'
+              - column:
+                  name: email
+                  value: 'mariaFirst@mail.com'
+              - column:
+                  name: password
+                  value: 'пароль2'
+
+  - changeSet:
+      id: 7
+      author: Alexandr
+      changes:
+        - insert:
+            tableName: user_roles
+            columns:
+              - column:
+                  name: user_id
+                  valueNumeric: 1
+              - column:
+                  name: role_id
+                  valueNumeric: 1
+        - insert:
+            tableName: user_roles
+            columns:
+              - column:
+                  name: user_id
+                  valueNumeric: 2
+              - column:
+                  name: role_id
+                  valueNumeric: 2
+
+  - changeSet:
+      id: 8
+      author: Alexandr
+      changes:
+        - insert:
+            tableName: poems
+            columns:
+              - column:
+                  name: title
+                  value: 'Вечер'
+              - column:
+                  name: content
+                  value: 'Данный стих очень красивый на тему Вечер.'
+              - column:
+                  name: author_id
+                  valueNumeric: 1
+        - insert:
+            tableName: poems
+            columns:
+              - column:
+                  name: title
+                  value: 'Утро'
+              - column:
+                  name: content
+                  value: 'Утренний стих для поднятия настроения.'
+              - column:
+                  name: author_id
+                  valueNumeric: 1
+        - insert:
+            tableName: poems
+            columns:
+              - column:
+                  name: title
+                  value: 'Зима'
+              - column:
+                  name: content
+                  value: 'Зимний согревающий стих для поднятия настроения.'
+              - column:
+                  name: author_id
+                  valueNumeric: 2
+        - insert:
+            tableName: poems
+            columns:
+              - column:
+                  name: title
+                  value: 'Лето'
+              - column:
+                  name: content
+                  value: 'Солнечный стих для лучшего загара и выработки витамина Д.'
+              - column:
+                  name: author_id
+                  valueNumeric: 2
