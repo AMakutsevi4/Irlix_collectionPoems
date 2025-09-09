@@ -803,4 +803,143 @@ public class DesktopScannerApplication {
 1. Создайте файл на рабочем столе с названием book-nice.txt
 2. Запустите приложение - оно автоматически обнаружит и обработает файл
 3. Настройте действие в application.yml (DELETE, MOVE или LOG)
-4. Файл будет обработан согласно настройкам в течение 5 секунд
+4. Файл будет обработан согласно настройкам
+ в течение 5 секунд
+
+
+Операция → кнопка на форме, которая запускает экспорт.
+Сервис экспорта → получает все карты (или по фильтрам), делает Excel.
+Возврат файла → пользователь сразу скачивает Excel в браузере.
+Я напишу код с подробными комментариями, чтобы всё было понятно.
+📂 Полный функционал экспорта кредитных карт в Excel
+🔹 Сервис экспорта
+@Service
+@RequiredArgsConstructor
+public class CreditCardExportService {
+
+    private final DataControllerEntityRepository repo;
+
+    /**
+     * Экспорт всех кредитных карт (без фильтров).
+     * @return массив байтов Excel-файла
+     */
+    public byte[] exportAllCards() {
+        try {
+            // Загружаем все карты из базы
+            List<CreditCard> cards = new ArrayList<>();
+            repo.findAll(CreditCard[].class).forEach(cards::add);
+
+            // Генерируем Excel
+            return exportCardsToExcel(cards);
+        } catch (IOException e) {
+            throw new RuntimeException("Ошибка при экспорте карт в Excel", e);
+        }
+    }
+
+    /**
+     * Экспорт карт с фильтрами.
+     * Например: номер карты или только положительный баланс.
+     * @param numberFilter фильтр по номеру карты (может быть null или пустым)
+     * @param onlyPositive если true — выгружаем только карты с балансом > 0
+     * @return массив байтов Excel-файла
+     */
+    public byte[] exportFilteredCards(String numberFilter, boolean onlyPositive) {
+        try {
+            List<CreditCard> cards = new ArrayList<>();
+            repo.findAll(CreditCard[].class).forEach(cards::add);
+
+            // Применяем фильтры
+            Stream<CreditCard> stream = cards.stream();
+
+            if (StringUtils.hasText(numberFilter)) {
+                stream = stream.filter(c -> c.getNumber().contains(numberFilter));
+            }
+
+            if (onlyPositive) {
+                stream = stream.filter(c -> c.getBalance().signum() > 0);
+            }
+
+            List<CreditCard> filteredCards = stream.collect(Collectors.toList());
+
+            return exportCardsToExcel(filteredCards);
+        } catch (IOException e) {
+            throw new RuntimeException("Ошибка при экспорте карт в Excel", e);
+        }
+    }
+
+    /**
+     * Генерация Excel-файла с картами.
+     */
+    private byte[] exportCardsToExcel(List<CreditCard> cards) throws IOException {
+        try (Workbook workbook = new XSSFWorkbook();
+             ByteArrayOutputStream fileOut = new ByteArrayOutputStream()) {
+
+            // Создаём новый лист
+            Sheet sheet = workbook.createSheet("Кредитные карты");
+            int rowIndex = 0;
+
+            // Заголовки
+            String[] columnNames = {"ID", "Номер карты", "Баланс"};
+            Row headerRow = sheet.createRow(rowIndex++);
+            for (int i = 0; i < columnNames.length; i++) {
+                headerRow.createCell(i).setCellValue(columnNames[i]);
+            }
+
+            // Данные
+            for (CreditCard card : cards) {
+                Row row = sheet.createRow(rowIndex++);
+                row.createCell(0).setCellValue(card.getId());
+                row.createCell(1).setCellValue(card.getNumber());
+                row.createCell(2).setCellValue(card.getBalance().toString());
+            }
+
+            // Автоматически подгоняем ширину колонок
+            for (int i = 0; i < columnNames.length; i++) {
+                sheet.autoSizeColumn(i);
+            }
+
+            // Записываем Excel в поток и возвращаем массив байтов
+            workbook.write(fileOut);
+            return fileOut.toByteArray();
+        }
+    }
+}
+🔹 Операция для экспорта
+@Component
+@RequiredArgsConstructor
+public class ExportCreditCardsOperation extends AutoInitOperation<CreditCard> {
+
+    private final CreditCardExportService exportService;
+
+    @Override
+    @Transactional(readOnly = true)
+    public OperationResponse execute(Request rp) {
+        // Читаем параметры фильтра из формы (если они есть)
+        String numberFilter = rp.hasField("numberFilter") ? rp.getField("numberFilter").getValue() : null;
+        boolean onlyPositive = rp.hasField("onlyPositive") && Boolean.parseBoolean(rp.getField("onlyPositive").getValue());
+
+        // Генерируем Excel (с фильтрами)
+        byte[] excelFile = exportService.exportFilteredCards(numberFilter, onlyPositive);
+
+        // Возвращаем пользователю файл — браузер предложит скачать
+        return OperationResponse.file(
+                excelFile,
+                "credit_cards.xlsx",          // имя скачиваемого файла
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" // MIME-тип Excel
+        );
+    }
+}
+🔹 Форма (пример)
+Чтобы это работало, у тебя в форме должны быть поля:
+numberFilter (текстовое поле → фильтр по номеру карты, можно пустое)
+onlyPositive (чекбокс → выгружать только карты с положительным балансом)
+Кнопка ОК, которая запускает ExportCreditCardsOperation.
+🔹 Что получится
+Пользователь открывает форму.
+Может ввести часть номера карты или поставить галочку «Только положительные балансы».
+Жмёт ОК.
+Вызовется execute().
+Сервис соберёт данные и сделает Excel.
+Браузер скачает credit_cards.xlsx.
+
+
