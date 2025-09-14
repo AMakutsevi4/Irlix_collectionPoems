@@ -117,3 +117,113 @@ blocked (Заблокирована)
 Шаблон Excel можно стилизовать (цвета, шрифты, лого). Данные будут вставляться ниже первой строки.
 Если нужно, можно добавить дополнительные колонки (например, дата создания карты, владелец).
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+🔹 Шаблон CreditCardsReport.xlsx.ftl
+Файл кладём в resources/templates/.
+Внутри можно писать прямо Excel-таблицу с подстановками:
+Номер карты	Владелец	Баланс	Валюта	Заблокирована
+<#list cards as card>				
+${card.number}	${card.owner}	${card.balance}	${card.currency}	${card.isBlocked?string("Да","Нет")}
+</#list>				
+👉 То есть у тебя одна строка — это шаблон для FreeMarker, он повторится для всех карт.
+🔹 Сервис
+@Service
+@RequiredArgsConstructor
+public class CreditCardReportService {
+
+    private final CreditCardRepository repo; // твой репозиторий
+    private final ResourceLoader resourceLoader;
+
+    public byte[] generateReport(User currentUser) {
+        try {
+            // получаем список карт из базы
+            List<CreditCard> cards = repo.findAll();
+
+            // параметры для шаблона
+            Map<String, Object> params = new HashMap<>();
+            params.put("cards", cards);
+            params.put("currentDate", LocalDate.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy")));
+            params.put("currentUser", currentUser.getFullName());
+
+            // генерируем Excel через FreeMarker
+            return FreemarkerWrapper.generateXlsx(
+                    loadTemplate("CreditCardsReport.xlsx.ftl"),
+                    params
+            );
+        } catch (Exception e) {
+            throw new RuntimeException("Ошибка при генерации Excel отчета", e);
+        }
+    }
+
+    private InputStream loadTemplate(String templateName) throws IOException {
+        return resourceLoader.getResource("classpath:templates/" + templateName).getInputStream();
+    }
+}
+🔹 Вызов из операции
+@Component
+@RequiredArgsConstructor
+public class CreditCardReportOperation extends AutoInitOperation<Void> {
+
+    private final CreditCardReportService reportService;
+
+    @Override
+    public OperationResponse execute(Request rp) {
+        User currentUser = getCurrentUser(); // возьми из сессии или контекста
+        byte[] report = reportService.generateReport(currentUser);
+        return OperationResponse.download("CreditCardsReport.xlsx", report);
+    }
+}
+🔹 Резюме
+Ты создаёшь шаблон Excel (CreditCardsReport.xlsx.ftl), кладёшь его в resources/templates/.
+В шаблоне используешь ${card.number}, ${card.balance}, ${currentDate}, ${currentUser} и т.д.
+Сервис CreditCardReportService подставляет данные из БД.
+При нажатии кнопки «ОК» на форме пользователь скачивает отчёт.
+Хочешь, я подготовлю готовый Excel-шаблон с FreeMarker-разметкой под твою сущность CreditCard, чтобы тебе осталось только скопировать и положить в resources/templates?
+Вы сказали:
+Нет покажи содержимое шаблона 
+ChatGPT сказал:
+Ниже пример содержимого FreeMarker-шаблона Excel для вашей задачи.
+Файл нужно сохранить как, например,
+src/main/resources/templates/CreditCardsReport.xlsx.ftl.
+⚠️ Важно: это не обычный .xlsx, а FreeMarker-шаблон.
+Его можно редактировать в Excel (как макет), а в нужных ячейках прописать ${...} — при генерации FreeMarker подставит значения.
+🗂 Содержимое CreditCardsReport.xlsx.ftl
+Номер карты	Владелец	Баланс	Валюта	Заблокирована
+<#list cards as card>				
+${card.number}	${card.owner}	${card.balance?string["0.00"]}	${card.currency}	${card.isBlocked?string("Да","Нет")}
+</#list>				
+Как редактировать шаблон в Excel
+Создай новый файл в Excel.
+Первая строка — заголовки: Номер карты, Владелец, Баланс, Валюта, Заблокирована.
+Со второй строки вместо данных вставь плейсхолдеры:
+${card.number}    ${card.owner}    ${card.balance?string["0.00"]}    ${card.currency}    ${card.isBlocked?string("Да","Нет")}
+Каждое выражение в своей ячейке.
+Чтобы повторять строку для каждой карты, оберни диапазон строк директивами:
+<#list cards as card>
+…строка с плейсхолдерами…
+</#list>
+Сохрани файл как обычный .xlsx, но добавь суффикс .ftl
+(например, CreditCardsReport.xlsx.ftl).
+Параметры, которые будет подставлять сервис
+cards — List<CreditCard> (каждый объект имеет number, owner, balance, currency, isBlocked).
+currentDate — ${currentDate} (если захочешь вывести дату формирования отчёта — можно добавить в отдельную ячейку, например в заголовке: Отчёт от ${currentDate}).
+currentUser — ${currentUser} (для подписи, тоже можно вставить в отдельную ячейку).
+Мини-пример верхней части файла
+Отчёт по картам на ${currentDate}				
+Номер карты	Владелец	Баланс	Валюта	Заблокирована
+<#list cards as card>				
+${card.number}	${card.owner}	${card.balance?string["0.00"]}	${card.currency}	${card.isBlocked?string("Да","Нет")}
+</#list>				
+💡 Теперь, когда сервис подставит cards, FreeMarker сгенерирует готовый .xlsx с данными из вашей базы.
