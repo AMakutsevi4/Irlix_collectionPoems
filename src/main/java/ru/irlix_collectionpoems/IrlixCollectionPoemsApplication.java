@@ -25,301 +25,132 @@ public class IrlixCollectionPoemsApplication {
         var encoder = new BCryptPasswordEncoder();
         return encoder.encode(password);
     }
-Ок 👍 тогда давай сделаем так: я подготовлю тебе полностью готовую реализацию, которая:
-берёт шаблон Excel из resources/templates/
-подставляет туда данные по твоим кредитным картам
-автоматически скачивает отчёт при нажатии ОК в форме
-учитывает, что в шаблоне может быть картинка и заголовки колонок
-🔹 Шаг 1. Подготовка шаблона Excel
-Создай файл CreditCardsReportTemplate.xlsx и положи в src/main/resources/templates/.
-В шаблоне сделай так:
-Вставь картинку (например, логотип компании).
-На первой строке напиши названия колонок, например:
-| Номер карты (number) | Баланс (balance) | Заблокирована (blocked) |
-👉 Названия в скобках (number, balance, blocked) должны совпадать с полями сущности CreditCard.
-🔹 Шаг 2. Сервис генерации отчёта
+1️⃣ Excel-шаблон cards_template.xlsx
+
+Создаём обычный файл в Excel и оформляем его.
+Содержание (я показываю текстом, в реальности просто размести так ячейки):
+
+┌──────────────────────────────┐
+│   ОТЧЁТ ПО КРЕДИТНЫМ КАРТАМ  │  (ячейка A1, крупный шрифт, по центру, можно объединить A1:D1)
+├──────────────────────────────┤
+│ Дата выгрузки:    [B2 пусто] │  (подписи в A2, а B2 оставляем пустой)
+│ Сформировал:      [B3 пусто] │  (подписи в A3, а B3 пустой)
+├──────────────────────────────┤
+│ № карты | Баланс | Статус | Лимит │  (строка 5 — заголовок таблицы, можно выделить жирным)
+
+
+Строка 5 — начало таблицы карт.
+Картинку/логотип можно вставить в верх (A1).
+
+2️⃣ Сервис генерации отчёта
+package com.example.report;
+
+import lombok.RequiredArgsConstructor;
+import org.apache.poi.xssf.usermodel.*;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.stereotype.Service;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+
 @Service
 @RequiredArgsConstructor
-public class ReportService {
+public class CreditCardReportService {
 
-    private final ResourceLoader resourceLoader;
     private final DataControllerEntityRepository repo;
 
     /**
-     * Генерация Excel-отчёта по шаблону
+     * Генерация отчёта по шаблону cards_template.xlsx
+     *
+     * @param currentUserFullName имя пользователя из rp.getUser().getFullName()
      */
-    public byte[] generateCreditCardReport() {
-        try (InputStream templateStream = loadTemplate("CreditCardsReportTemplate.xlsx");
-             Workbook workbook = new XSSFWorkbook(templateStream);
-             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-
-            // Берём первый лист
-            Sheet sheet = workbook.getSheetAt(0);
-
-            // Загружаем все карты из БД
-            Iterable<CreditCard> creditCards = repo.findAll(CreditCard[].class);
-
-            int rowIndex = 1; // начинаем со 2-й строки, первая занята заголовками
-
-            for (CreditCard card : creditCards) {
-                Row row = sheet.createRow(rowIndex++);
-
-                // Колонка 1: номер карты
-                row.createCell(0).setCellValue(card.getNumber());
-
-                // Колонка 2: баланс
-                if (card.getBalance() != null) {
-                    row.createCell(1).setCellValue(card.getBalance().doubleValue());
-                } else {
-                    row.createCell(1).setCellValue(0);
-                }
-
-                // Колонка 3: статус блокировки
-                row.createCell(2).setCellValue(Boolean.TRUE.equals(card.getBlocked()) ? "Да" : "Нет");
-            }
-
-            workbook.write(out);
-            return out.toByteArray();
-
-        } catch (IOException e) {
-            throw new RuntimeException("Ошибка при формировании отчёта: " + e.getMessage(), e);
-        }
-    }
-
-    private InputStream loadTemplate(String templateName) throws IOException {
-        return resourceLoader.getResource("classpath:templates/" + templateName).getInputStream();
-    }
-}
-🔹 Шаг 3. Операция (вызов отчёта из формы)
-@Component
-@RequiredArgsConstructor
-public class CreditCardReportOperation extends AutoInitOperation<CreditCard> {
-
-    private final ReportService reportService;
-
-    @Override
-    public OperationResponse execute(Request rp) {
-        byte[] file = reportService.generateCreditCardReport();
-
-        // Скачивание файла пользователю
-        return OperationResponse.download("Отчет_по_картам.xlsx", file);
-    }
-}
-🔹 Как это работает
-Ты создаёшь шаблон Excel с колонками:
-number (Номер карты)
-balance (Баланс)
-blocked (Заблокирована)
-Когда пользователь жмёт ОК в форме → срабатывает метод execute.
-Сервис ReportService подгружает шаблон, добавляет в него строки с данными из БД.
-Готовый отчёт скачивается как Отчет_по_картам.xlsx.
-📌 Важное:
-Шаблон Excel можно стилизовать (цвета, шрифты, лого). Данные будут вставляться ниже первой строки.
-Если нужно, можно добавить дополнительные колонки (например, дата создания карты, владелец).
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-🔹 Шаблон CreditCardsReport.xlsx.ftl
-Файл кладём в resources/templates/.
-Внутри можно писать прямо Excel-таблицу с подстановками:
-Номер карты	Владелец	Баланс	Валюта	Заблокирована
-<#list cards as card>				
-${card.number}	${card.owner}	${card.balance}	${card.currency}	${card.isBlocked?string("Да","Нет")}
-</#list>				
-👉 То есть у тебя одна строка — это шаблон для FreeMarker, он повторится для всех карт.
-🔹 Сервис
-@Service
-@RequiredArgsConstructor
-public class CreditCardReportService {
-
-    private final CreditCardRepository repo; // твой репозиторий
-    private final ResourceLoader resourceLoader;
-
-    public byte[] generateReport(User currentUser) {
-        try {
-            // получаем список карт из базы
-            List<CreditCard> cards = repo.findAll();
-
-            // параметры для шаблона
-            Map<String, Object> params = new HashMap<>();
-            params.put("cards", cards);
-            params.put("currentDate", LocalDate.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy")));
-            params.put("currentUser", currentUser.getFullName());
-
-            // генерируем Excel через FreeMarker
-            return FreemarkerWrapper.generateXlsx(
-                    loadTemplate("CreditCardsReport.xlsx.ftl"),
-                    params
-            );
-        } catch (Exception e) {
-            throw new RuntimeException("Ошибка при генерации Excel отчета", e);
-        }
-    }
-
-    private InputStream loadTemplate(String templateName) throws IOException {
-        return resourceLoader.getResource("classpath:templates/" + templateName).getInputStream();
-    }
-}
-🔹 Вызов из операции
-@Component
-@RequiredArgsConstructor
-public class CreditCardReportOperation extends AutoInitOperation<Void> {
-
-    private final CreditCardReportService reportService;
-
-    @Override
-    public OperationResponse execute(Request rp) {
-        User currentUser = getCurrentUser(); // возьми из сессии или контекста
-        byte[] report = reportService.generateReport(currentUser);
-        return OperationResponse.download("CreditCardsReport.xlsx", report);
-    }
-}
-🔹 Резюме
-Ты создаёшь шаблон Excel (CreditCardsReport.xlsx.ftl), кладёшь его в resources/templates/.
-В шаблоне используешь ${card.number}, ${card.balance}, ${currentDate}, ${currentUser} и т.д.
-Сервис CreditCardReportService подставляет данные из БД.
-При нажатии кнопки «ОК» на форме пользователь скачивает отчёт.
-Хочешь, я подготовлю готовый Excel-шаблон с FreeMarker-разметкой под твою сущность CreditCard, чтобы тебе осталось только скопировать и положить в resources/templates?
-Вы сказали:
-Нет покажи содержимое шаблона 
-ChatGPT сказал:
-Ниже пример содержимого FreeMarker-шаблона Excel для вашей задачи.
-Файл нужно сохранить как, например,
-src/main/resources/templates/CreditCardsReport.xlsx.ftl.
-⚠️ Важно: это не обычный .xlsx, а FreeMarker-шаблон.
-Его можно редактировать в Excel (как макет), а в нужных ячейках прописать ${...} — при генерации FreeMarker подставит значения.
-🗂 Содержимое CreditCardsReport.xlsx.ftl
-Номер карты	Владелец	Баланс	Валюта	Заблокирована
-<#list cards as card>				
-${card.number}	${card.owner}	${card.balance?string["0.00"]}	${card.currency}	${card.isBlocked?string("Да","Нет")}
-</#list>				
-Как редактировать шаблон в Excel
-Создай новый файл в Excel.
-Первая строка — заголовки: Номер карты, Владелец, Баланс, Валюта, Заблокирована.
-Со второй строки вместо данных вставь плейсхолдеры:
-${card.number}    ${card.owner}    ${card.balance?string["0.00"]}    ${card.currency}    ${card.isBlocked?string("Да","Нет")}
-Каждое выражение в своей ячейке.
-Чтобы повторять строку для каждой карты, оберни диапазон строк директивами:
-<#list cards as card>
-…строка с плейсхолдерами…
-</#list>
-Сохрани файл как обычный .xlsx, но добавь суффикс .ftl
-(например, CreditCardsReport.xlsx.ftl).
-Параметры, которые будет подставлять сервис
-cards — List<CreditCard> (каждый объект имеет number, owner, balance, currency, isBlocked).
-currentDate — ${currentDate} (если захочешь вывести дату формирования отчёта — можно добавить в отдельную ячейку, например в заголовке: Отчёт от ${currentDate}).
-currentUser — ${currentUser} (для подписи, тоже можно вставить в отдельную ячейку).
-Мини-пример верхней части файла
-Отчёт по картам на ${currentDate}				
-Номер карты	Владелец	Баланс	Валюта	Заблокирована
-<#list cards as card>				
-${card.number}	${card.owner}	${card.balance?string["0.00"]}	${card.currency}	${card.isBlocked?string("Да","Нет")}
-</#list>				
-💡 Теперь, когда сервис подставит cards, FreeMarker сгенерирует готовый .xlsx с данными из вашей базы.
-
-
-
-
-
-
-
-
-
-
-
-
-1️⃣ Шаблон
-В src/main/resources/templates/CreditCardsReport.xlsx
-Первая строка — заголовок, стили, картинка — всё оформляешь прямо в Excel.
-Начиная со 2-й строки оставь пустую «образцовую» строку, в которую будем копировать данные.
-2️⃣ Сервис генерации
-@Service
-@RequiredArgsConstructor
-public class CreditCardReportService {
-
-    private final CreditCardRepository repo;          // ваш репозиторий
-    private final ResourceLoader resourceLoader;      // чтобы достать шаблон
-
-    public byte[] generateReport(User currentUser) {
-        try (InputStream template =
-                     resourceLoader.getResource("classpath:templates/CreditCardsReport.xlsx").getInputStream();
-             XSSFWorkbook workbook = new XSSFWorkbook(template);
-             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-
-            // 1. Получаем данные из БД
-            List<CreditCard> cards = repo.findAll();
-
-            // 2. Берём первый лист
+    public byte[] generateReport(String currentUserFullName) {
+        try (XSSFWorkbook workbook = new XSSFWorkbook(
+                new ClassPathResource("templates/cards_template.xlsx").getInputStream()
+        )) {
             XSSFSheet sheet = workbook.getSheetAt(0);
 
-            // 3. Начинаем со второй строки (индекс 1, т.к. 0 – шапка)
-            int rowIndex = 1;
+            // 1. Заполняем шапку: дата и пользователь
+            String today = LocalDate.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
+            sheet.getRow(1).createCell(1).setCellValue(today);                 // B2
+            sheet.getRow(2).createCell(1).setCellValue(currentUserFullName);   // B3
 
+            // 2. Подготавливаем список карт
+            List<CreditCard> cards = repo.findAll(CreditCard.class);
+
+            int rowIndex = 5; // таблица начинается с 6-й строки (индекс 5)
             for (CreditCard card : cards) {
-                Row row = sheet.createRow(rowIndex++);
-                row.createCell(0).setCellValue(card.getNumber());
-                row.createCell(1).setCellValue(card.getOwner());
-                row.createCell(2).setCellValue(card.getBalance().doubleValue());
-                row.createCell(3).setCellValue(card.getCurrency());
-                row.createCell(4).setCellValue(card.getIsBlocked() ? "Да" : "Нет");
+                XSSFRow row = sheet.createRow(rowIndex++);
+
+                row.createCell(0).setCellValue(card.getNumber());          // № карты
+                BigDecimal bal = card.getBalance() == null ? BigDecimal.ZERO : card.getBalance();
+                row.createCell(1).setCellValue(bal.doubleValue());         // Баланс
+                row.createCell(2).setCellValue(card.isBlocked() ? "Заблокирована" : "Активна");
+                row.createCell(3).setCellValue(card.getLimit().doubleValue());
             }
 
-            // 4. Доп. инфо о пользователе / дате
-            sheet.createRow(rowIndex + 1)
-                 .createCell(0)
-                 .setCellValue("Отчёт сформирован: "
-                               + currentUser.getFullName()
-                               + " — "
-                               + LocalDate.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy")));
-
-            // 5. Пишем в поток
-            workbook.write(out);
-            return out.toByteArray();
-
+            // 3. Возвращаем байты для скачивания
+            try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                workbook.write(out);
+                return out.toByteArray();
+            }
         } catch (IOException e) {
-            throw new RuntimeException("Ошибка при создании отчёта", e);
+            throw new RuntimeException("Ошибка генерации Excel-отчёта", e);
         }
     }
 }
-Здесь никаких сторонних обёрток:
-– шаблон берём из resources/templates/CreditCardsReport.xlsx;
-– наполняем данными напрямую через Apache POI;
-– на выходе — готовый byte[].
-3️⃣ Операция/контроллер
+
+3️⃣ Операция, вызываемая кнопкой формы
+package com.example.operation;
+
+import com.example.report.CreditCardReportService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
 @Component
 @RequiredArgsConstructor
-public class CreditCardReportOperation extends AutoInitOperation<Void> {
+public class DownloadCardsReportOperation extends AutoInitOperation<CreditCard> {
 
     private final CreditCardReportService reportService;
 
     @Override
     public OperationResponse execute(Request rp) {
-        User currentUser = getCurrentUser(); // возьми из контекста
+        // Имя текущего пользователя из формы
+        String currentUser = rp.getUser().getFullName();
+
+        // Генерация отчёта
         byte[] report = reportService.generateReport(currentUser);
-        return OperationResponse.download("CreditCardsReport.xlsx", report);
+
+        // Отправляем файл на скачивание
+        return OperationResponse.download(
+                "credit_cards_report.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                report
+        );
     }
 }
-При нажатии кнопки ОК на форме этот код:
-достаёт шаблон,
-вписывает все карты из БД,
-возвращает файл как скачиваемый.
-Что изменилось по сравнению с «FreemarkerWrapper»
-Никаких внешних зависимостей: только org.apache.poi:poi-ooxml и spring-core (для ResourceLoader).
-Шаблон остаётся «живым» Excel-файлом: можно нарисовать логотип, задать шрифты, стили, формулы — всё сохранится.
-Добавь зависимость в pom.xml, если ещё нет:
-<dependency>
-    <groupId>org.apache.poi</groupId>
+
+Как это работает
+
+Пользователь нажимает кнопку на форме.
+
+Платформа вызывает execute().
+
+Берём имя текущего пользователя rp.getUser().getFullName().
+
+Открываем готовый Excel-шаблон:
+
+в B2 пишем дату выгрузки,
+
+в B3 — ФИО пользователя,
+
+начиная со строки 6 заполняем таблицу данными карт.
+
+Возвращаем OperationResponse.download → браузер скачивает готовый файл.
     <artifactId>poi-ooxml</artifactId>
     <version>5.2.5</version>
 </dependency>
