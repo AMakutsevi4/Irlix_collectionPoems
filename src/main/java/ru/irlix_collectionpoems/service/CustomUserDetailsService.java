@@ -240,3 +240,124 @@ for (Client client : answerDocument.getAnsFindClient().getExactClients().getClie
 
 Если не хочешь присылать — сделай шаг 1 (залогируй XML) и по результату выполни шаги из п.2–4. Помогу дальше — скажи, какой вариант удобнее.
 
+
+
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.*;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+
+/**
+ * Тесты для метода IbsoServiceImpl.findFilteredClients.
+ * Мы не ходим во внешний сервис IBSO, а подставляем фейковые ответы с помощью Mockito.
+ */
+@ExtendWith(MockitoExtension.class)
+class IbsoServiceImplTest {
+
+    // ----------- Моки зависимостей -----------
+
+    /** Это внешний сервис, который реальный код дергает для запроса в ИБСО. */
+    @Mock
+    private DirectABSService directABSService;
+
+    /**
+     * Тестируемый сервис. Все @Mock-поля будут внедрены сюда автоматически,
+     * чтобы мы могли управлять поведением зависимостей.
+     */
+    @InjectMocks
+    private IbsoServiceImpl ibsoService;
+
+    // ----------- Позитивный тест -----------
+
+    @Test
+    void findFilteredClients_returnsClientMap_whenClientExists() {
+        // === Подготовка данных ===
+
+        // Запрос, который пойдет в метод
+        ReqFindClient req = new ReqFindClient();
+        req.setClientId("123");
+
+        // Поддельный клиент, который как будто пришёл от ИБСО
+        Client client = new Client();
+        client.setId("123");
+        client.setInn("1234567890");
+        client.setSurname("Ivanov");
+        client.setFirstname("Ivan");
+        client.setMiddlename("Ivanovich");
+        client.setBirthdate("01.01.1990");
+        client.setMainDoc("1111 222222");
+        client.setMainContact("79990001122");
+
+        // Упаковываем клиента в структуру, имитирующую XML-ответ
+        AnsFindClient ans = new AnsFindClient();
+        ExactClients exact = new ExactClients();
+        exact.getClient().add(client);
+        ans.setExactClients(exact);
+
+        Document fakeResponse = new Document();
+        fakeResponse.setAnsFindClient(ans);
+
+        // === Настройка мока ===
+        // Говорим Mockito: когда сервис попытается вызвать directABSService.request(),
+        // верни наш поддельный Document вместо настоящего запроса
+        when(directABSService.request(any())).thenReturn(fakeResponse);
+
+        // === Выполнение тестируемого метода ===
+        List<Map<String, String>> result = ibsoService.findFilteredClients(req);
+
+        // === Проверки ===
+        assertEquals(1, result.size(), "Должен вернуться один клиент");
+        Map<String, String> map = result.get(0);
+        assertEquals("123", map.get("ID"));
+        assertEquals("Ivanov Ivan Ivanovich", map.get("fio"));
+        assertEquals("79990001122", map.get("phone"));
+    }
+
+    // ----------- Негативный тест №1: ответ содержит failure -----------
+
+    @Test
+    void findFilteredClients_throwsException_whenFailureReturned() {
+        // Запрос
+        ReqFindClient req = new ReqFindClient();
+        req.setClientId("not-exists");
+
+        // Ответ с ошибкой
+        Failure failure = new Failure();
+        failure.setInfo("Client not found");
+
+        AnsFindClient ans = new AnsFindClient();
+        ans.setFailure(failure);
+
+        Document fakeResponse = new Document();
+        fakeResponse.setAnsFindClient(ans);
+
+        // Мокаем успешный вызов, но с ошибкой внутри ответа
+        when(directABSService.request(any())).thenReturn(fakeResponse);
+
+        // Ожидаем, что метод выбросит RuntimeException
+        RuntimeException ex = assertThrows(
+            RuntimeException.class,
+            () -> ibsoService.findFilteredClients(req)
+        );
+        assertTrue(ex.getMessage().contains("Client not found"));
+    }
+
+    // ----------- Негативный тест №2: исключение при запросе в ИБСО -----------
+
+    @Test
+    void findFilteredClients_throwsException_whenRequestFails() {
+        // Запрос
+        ReqFindClient req = new ReqFindClient();
+        req.setClientId("any");
+
+        // Настраиваем мок так, чтобы он бросал исключение (например, сеть упала)
+        when(directABSService.request(any()))
+            .
