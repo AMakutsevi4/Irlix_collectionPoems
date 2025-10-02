@@ -1,4 +1,4 @@
-уpackage ru.irlix_collectionpoems.service;
+package ru.irlix_collectionpoems.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.GrantedAuthority;
@@ -361,3 +361,116 @@ class IbsoServiceImplTest {
         // Настраиваем мок так, чтобы он бросал исключение (например, сеть упала)
         when(directABSService.request(any()))
             .
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import ru.dynamika.findelivery.ibso.IbsoServiceImpl;
+import ru.dynamika.unitsplayer.model.generated.Client;
+import ru.dynamika.unitsplayer.model.generated.Document;
+
+import java.util.*;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+/**
+ * Тесты для сервиса IBSO (findFilteredClients).
+ * Используем JUnit 5 + Mockito.
+ */
+@ExtendWith(MockitoExtension.class)
+class IbsoServiceImplTest {
+
+    @Mock
+    private DirectABSService directABSService; // мокаем внешний сервис
+
+    @InjectMocks
+    private IbsoServiceImpl ibsoService; // тестируем реальный сервис
+
+    @Test
+    @DisplayName("✅ Позитивный кейс: IBSO возвращает клиента, маппинг корректный")
+    void testFindFilteredClients_success() {
+        // 1. Подготавливаем фейковый ответ от IBSO
+        Client client = new Client();
+        client.setId("12345");
+        client.setInn("7701234567");
+        client.setSurname("Иванов");
+        client.setFirstname("Иван");
+        client.setMiddlename("Иванович");
+        client.setBirthdate("01.01.1990");
+        client.setMainDoc("1111 222222");
+        client.setMainContact("79247694420");
+
+        Document answerDoc = new Document();
+        answerDoc.setAnsFindClient(new AnsFindClientStub(client));
+
+        // 2. Мокаем вызов IBSO
+        when(directABSService.request(any(Document.class))).thenReturn(answerDoc);
+
+        // 3. Запускаем метод
+        ReqFindClient req = new ReqFindClient();
+        req.setClientId("12345");
+        List<Map<String, String>> result = ibsoService.findFilteredClients(req);
+
+        // 4. Проверяем результат
+        assertEquals(1, result.size());
+        Map<String, String> clientMap = result.get(0);
+        assertEquals("12345", clientMap.get("ID"));
+        assertEquals("7701234567", clientMap.get("inn"));
+        assertEquals("Иванов Иван Иванович", clientMap.get("fio"));
+        assertEquals("01.01.1990", clientMap.get("birthdate"));
+        assertEquals("1111 222222", clientMap.get("passport"));
+        assertEquals("79247694420", clientMap.get("phone"));
+    }
+
+    @Test
+    @DisplayName("❌ Негативный кейс: IBSO возвращает failure → должно быть исключение")
+    void testFindFilteredClients_failure() {
+        // 1. Подготавливаем фейковый ответ с ошибкой
+        Document answerDoc = new Document();
+        answerDoc.setAnsFindClient(new AnsFindClientFailureStub("Ошибка доступа"));
+
+        when(directABSService.request(any(Document.class))).thenReturn(answerDoc);
+
+        // 2. Проверяем что выбрасывается RuntimeException
+        ReqFindClient req = new ReqFindClient();
+        assertThrows(RuntimeException.class, () -> ibsoService.findFilteredClients(req));
+    }
+
+    @Test
+    @DisplayName("⚠️ IBSO вернул пустой список клиентов → результат пустой")
+    void testFindFilteredClients_empty() {
+        Document answerDoc = new Document();
+        answerDoc.setAnsFindClient(new AnsFindClientEmptyStub());
+
+        when(directABSService.request(any(Document.class))).thenReturn(answerDoc);
+
+        ReqFindClient req = new ReqFindClient();
+        List<Map<String, String>> result = ibsoService.findFilteredClients(req);
+
+        assertTrue(result.isEmpty());
+    }
+
+    // ---- стабы для упрощения теста ----
+    private static class AnsFindClientStub extends AnsFindClient {
+        private final Client client;
+        AnsFindClientStub(Client client) { this.client = client; }
+        @Override public List<Client> getExactClients() { return List.of(client); }
+    }
+
+    private static class AnsFindClientFailureStub extends AnsFindClient {
+        private final Failure failure;
+        AnsFindClientFailureStub(String message) {
+            this.failure = new Failure();
+            this.failure.setInfo(message);
+        }
+        @Override public Failure getFailure() { return failure; }
+    }
+
+    private static class AnsFindClientEmptyStub extends AnsFindClient {
+        @Override public List<Client> getExactClients() { return Collections.emptyList(); }
+    }
+}
+
