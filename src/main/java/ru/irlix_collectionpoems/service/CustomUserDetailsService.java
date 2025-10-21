@@ -474,3 +474,143 @@ class IbsoServiceImplTest {
     }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+подключения к ИБСО
+@Configuration
+@ConfigurationProperties(prefix = "ibso")
+@Getter
+@Setter
+public class IbsoProperties {
+    private String url;
+    private String username;
+    private String password;
+    private int timeout;
+}
+🚀 2. Сервис интеграции с ИБСО (DirectIbsoService)
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class DirectIbsoService {
+
+    private final RestTemplate restTemplate = new RestTemplate();
+    private final IbsoProperties ibsoProperties;
+
+    public IbsoResponse sendApplication(CreditApplication application) {
+        try {
+            // Формируем заголовки
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setBasicAuth(ibsoProperties.getUsername(), ibsoProperties.getPassword());
+
+            // Формируем тело запроса
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("clientId", application.getMplClientId());
+            requestBody.put("amount", application.getAmount());
+            requestBody.put("term", application.getTerm());
+            requestBody.put("region", application.getRegion());
+            requestBody.put("fullName", application.getLastName() + " " + application.getFirstName());
+            requestBody.put("phone", application.getPhone());
+
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
+
+            log.info("Отправка заявки в ИБСО: {}", requestBody);
+
+            ResponseEntity<IbsoResponse> response = restTemplate.exchange(
+                    ibsoProperties.getUrl(),
+                    HttpMethod.POST,
+                    request,
+                    IbsoResponse.class
+            );
+
+            log.info("Ответ от ИБСО: {}", response.getBody());
+
+            return response.getBody();
+
+        } catch (HttpStatusCodeException e) {
+            log.error("Ошибка при вызове ИБСО: {} {}", e.getStatusCode(), e.getResponseBodyAsString());
+            return new IbsoResponse("ERROR", null, e.getResponseBodyAsString());
+        } catch (Exception e) {
+            log.error("Системная ошибка при отправке в ИБСО", e);
+            return new IbsoResponse("ERROR", null, e.getMessage());
+        }
+    }
+}
+📦 3. DTO ответа от ИБСО
+@AllArgsConstructor
+@NoArgsConstructor
+@Getter
+@Setter
+@ToString
+public class IbsoResponse {
+    private String status;      // Например: SUCCESS / ERROR
+    private String ibsoAppId;   // ID заявки в ИБСО
+    private String message;     // Описание ошибки, если есть
+}
+🧰 4. Интеграция с бизнес-логикой
+В твоём CreditApplicationServiceImpl просто вызываем наш DirectIbsoService:
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class CreditApplicationServiceImpl implements CreditApplicationService {
+
+    private final CreditApplicationRepository applicationRepository;
+    private final CreditApplicationMapper applicationMapper;
+    private final DirectIbsoService directIbsoService;
+
+    @Override
+    @Transactional
+    public CreditApplicationResponse save(@NonNull CreditApplicationRequest request) {
+        // 1. Сохраняем заявку
+        CreditApplication application = applicationRepository.save(
+                applicationMapper.createRequestToEntity(request)
+        );
+        log.info("Заявка сохранена в БД: {}", application.getId());
+
+        // 2. Отправляем в ИБСО
+        IbsoResponse ibsoResponse = directIbsoService.sendApplication(application);
+
+        // 3. Формируем ответ клиенту
+        CreditApplicationResponse response = new CreditApplicationResponse();
+        response.setId(application.getId());
+        response.setStatus(ibsoResponse.getStatus());
+        response.setErrorMessage(ibsoResponse.getMessage());
+
+        log.info("Возвращаем ответ клиенту: {}", response);
+        return response;
+    }
+}
+✅ Результат
+Когда маркетплейс делает POST /applicationSave,
+ты сохраняешь заявку и отправляешь JSON в ИБСО.
+В логах ты увидишь:
+Отправка заявки в ИБСО: {...}
+Ответ от ИБСО: IbsoResponse(status=SUCCESS, ibsoAppId=12345, message=null)
+Клиент получает ответ:
+{
+  "status": "SUCCESS",
+  "id": "7d1b1b4a-19b2-4a59-bf15-74b9a7cd5b98",
+  "errorMessage": null
+}
+
