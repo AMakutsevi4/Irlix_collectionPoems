@@ -257,3 +257,492 @@ mv -- "$TMP_DOWNLOAD_DIR/$distributionUrlNameMain" "$MAVEN_HOME" || [ -d "$MAVEN
 
 clean || :
 exec_maven "$@"
+
+
+package ru.pskb.integrator.validation;
+
+import org.springframework.stereotype.Component;
+import ru.pskb.integrator.dto.creditApplication.CreditApplicationRequest;
+import ru.pskb.integrator.enums.*;
+import ru.pskb.integrator.exception.ValidationException;
+
+import java.time.LocalDate;
+import java.time.Period;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Pattern;
+
+import static org.apache.commons.lang3.StringUtils.isBlank;
+
+@Component
+public class CreditApplicationValidator {
+
+    // ====================== Паттерны ======================
+    private static final Pattern PHONE_PATTERN = Pattern.compile("^[345689]\\d{9}$");
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Za-z0-9+_.-]+@(.+)$");
+    private static final Pattern PASSPORT_PATTERN = Pattern.compile("^\\d{10}$");
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+
+    // ====================== Основной метод ======================
+    public void validate(CreditApplicationRequest request) {
+        List<String> errors = new ArrayList<>();
+
+        validateCarData(request, errors);
+        validateEmployment(request, errors);
+        validatePhones(request, errors);
+        validateAge(request, errors);
+
+        if (!errors.isEmpty()) {
+            throw new ValidationException(errors);
+        }
+    }
+
+    // ====================== Проверка цели кредита ======================
+    private void validateCarData(CreditApplicationRequest request, List<String> errors) {
+        Purpose purpose = request.purpose();
+        if (purpose == null) return;
+
+        boolean isCarPurpose =
+                purpose == Purpose.BUYING_NEW_CAR || purpose == Purpose.BUYING_USED_CAR;
+
+        if (isCarPurpose) {
+            if (request.initialFee() <= 0) {
+                errors.add("Для цели 'Покупка авто' необходимо указать первоначальный взнос");
+            }
+            if (isBlank(request.purchaseCarBrand())) {
+                errors.add("Для цели 'Покупка авто' необходимо указать марку автомобиля");
+            }
+            if (isBlank(request.purchaseCarModel())) {
+                errors.add("Для цели 'Покупка авто' необходимо указать модель автомобиля");
+            }
+        }
+    }
+
+    // ====================== Проверка занятости ======================
+    private void validateEmployment(CreditApplicationRequest request, List<String> errors) {
+        EmploymentType employment = request.employmentType();
+        UnemploymentReason reason = request.unemploymentReason();
+
+        if (employment == null) return;
+
+        if (employment == EmploymentType.DONT_WORK && reason == null) {
+            errors.add("Не указана причина незанятости");
+        }
+
+        boolean requiresOrgData = switch (employment) {
+            case MILLITARY, PUBLIC_OFFICER, EMPLOY, OWN_BUSINESS, JUDGE -> true;
+            default -> false;
+        };
+
+        if (requiresOrgData) {
+            if (isBlank(request.organizationName())) {
+                errors.add("Название организации обязательно для заполнения");
+            }
+            if (isBlank(request.activityField())) {
+                errors.add("Сфера деятельности обязательна для заполнения");
+            }
+            if (isBlank(request.startDate())) {
+                errors.add("Дата начала работы обязательна для заполнения");
+            }
+            if (isBlank(request.workPosition())) {
+                errors.add("Название должности обязательно для заполнения");
+            }
+            if (isBlank(request.organizationPosition())) {
+                errors.add("Тип должности обязателен для заполнения");
+            }
+            if (isBlank(request.workPhone())) {
+                errors.add("Рабочий телефон обязателен для заполнения");
+            }
+        }
+    }
+
+    // ====================== Проверка телефонов ======================
+    private void validatePhones(CreditApplicationRequest request, List<String> errors) {
+        if
+        (isBlank(request.phone()) || !PHONE_PATTERN.matcher(request.phone()).matches()) {
+            errors.add("Некорректный номер мобильного телефона");
+        }
+
+        if (!isBlank(request.registrationPhone()) &&
+                request.registrationPhone().equals(request.phone())) {
+            errors.add("Телефон по месту регистрации не должен совпадать с мобильным");
+        }
+
+        if (!isBlank(request.additionalPhone()) &&
+                !PHONE_PATTERN.matcher(request.additionalPhone()).matches()) {
+            errors.add("Некорректный дополнительный телефон");
+        }
+
+        if (request.additionalPhoneOwner() != null &&
+                request.additionalPhoneOwner() != AdditionalPhoneOwner.MY_NUMBER &&
+                isBlank(request.additionalPhoneOwnerFio())) {
+            errors.add("ФИО владельца дополнительного телефона обязательно");
+        }
+    }
+
+    // ====================== Проверка возраста ======================
+    private void validateAge(CreditApplicationRequest request, List<String> errors) {
+        String birthDateStr = request.birthDate();
+        if (isBlank(birthDateStr)) {
+            errors.add("Дата рождения обязательна для заполнения");
+            return;
+        }
+
+        try {
+            LocalDate birthDate = LocalDate.parse(birthDateStr, DATE_FORMATTER);
+            int age = Period.between(birthDate, LocalDate.now()).getYears();
+
+            if (age < 18) {
+                errors.add("Возраст клиента должен быть не менее 18 лет");
+            } else if (age > 70) {
+                errors.add("Возраст клиента превышает допустимый предел (70 лет)");
+            }
+        } catch (DateTimeParseException e) {
+            errors.add("Некорректный формат даты рождения. Ожидается формат dd.MM.yyyy");
+        }
+    }
+}
+
+package ru.pskb.integrator.validation;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import ru.pskb.integrator.dto.creditApplication.CreditApplicationRequest;
+import ru.pskb.integrator.enums.*;
+import ru.pskb.integrator.exception.ValidationException;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThatCode;
+
+class CreditApplicationValidatorTest {
+
+    private CreditApplicationValidator validator;
+
+    @BeforeEach
+    void setUp() {
+        validator = new CreditApplicationValidator();
+    }
+
+    // ====================== Вспомогательный метод ======================
+    private CreditApplicationRequest createBaseRequest() {
+        return new CreditApplicationRequest(
+                "Иванов Иван Иванович",           // fullName
+                "01.01.1990",                    // birthDate
+                "9123456789",                    // phone
+                "9123456790",                    // registrationPhone
+                "9123456791",                    // additionalPhone
+                AdditionalPhoneOwner.MY_NUMBER,  // additionalPhoneOwner
+                null,                            // additionalPhoneOwnerFio
+                Purpose.CONSUMER,                // purpose
+                100000,                          // initialFee
+                "Hyundai",                       // carBrand
+                "Solaris",                       // carModel
+                EmploymentType.EMPLOY,           // employmentType
+                UnemploymentReason.NONE,         // unemploymentReason
+                "ООО Рога и Копыта",             // organizationName
+                "IT",                            // activityField
+                "01.02.2010",                    // startDate
+                "Разработчик",                   // workPosition
+                "Специалист",                    // organizationPosition
+                "3456789012"                     // workPhone
+        );
+    }
+
+    // ====================== Позитивный сценарий ======================
+    @Test
+    @DisplayName("✅ Валидная заявка не вызывает ошибок")
+    void validRequestShouldPass() {
+        CreditApplicationRequest request = createBaseRequest();
+
+        assertThatCode(() -> validator.validate(request))
+                .doesNotThrowAnyException();
+    }
+
+    // ====================== Возрастные ограничения ======================
+    @Test
+    @DisplayName("❌ Клиент младше 18 лет — ошибка")
+    void shouldFailIfUnder18() {
+        CreditApplicationRequest request = createBaseRequest().withBirthDate("01.01.2010");
+
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Возраст клиента должен быть не менее 18 лет");
+    }
+
+    @Test
+    @DisplayName("❌ Клиент старше 70 лет — ошибка")
+    void shouldFailIfOver70() {
+        CreditApplicationRequest request = createBaseRequest().withBirthDate("01.01.1940");
+
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Возраст клиента превышает допустимый предел");
+    }
+
+    @Test
+    @DisplayName("❌ Некорректный формат даты рождения — ошибка")
+    void shouldFailIfBirthDateFormatInvalid() {
+        CreditApplicationRequest request = createBaseRequest().withBirthDate("1990-01-01");
+
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Некорректный формат даты рождения");
+    }
+
+    // ====================== Проверка целей кредита ======================
+    @Test
+    @DisplayName("❌ Цель — покупка авто, но без марки и модели")
+    void shouldFailIfCarDataMissing() {
+        CreditApplicationRequest request = createBaseRequest()
+                .withPurpose(Purpose.BUYING_NEW_CAR)
+                .withPurchaseCarBrand("")
+                .withPurchaseCarModel("")
+                .withInitialFee(0);
+
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("марку автомобиля")
+                .hasMessageContaining("модель автомобиля")
+                .hasMessageContaining("первоначальный взнос");
+    }
+
+    // ====================== Проверка телефонов ======================
+    @Test
+    @DisplayName("❌ Регистрационный телефон совпадает с мобильным")
+    void shouldFailIfPhonesEqual() {
+        CreditApplicationRequest request = createBaseRequest()
+                .withRegistrationPhone("9123456789");
+
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Телефон по месту регистрации не должен совпадать");
+    }
+
+    @Test
+    @DisplayName("❌ Неверный формат мобильного телефона")
+    void shouldFailIfPhoneInvalid() {
+        CreditApplicationRequest request = createBaseRequest().withPhone("123");
+
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Некорректный номер мобильного телефона");
+    }
+
+    // ====================== Проверка занятости ======================
+    @Test
+    @DisplayName("❌ Нет данных по организации при занятости EMPLOY")
+    void shouldFailIfEmploymentDataMissing() {
+        CreditApplicationRequest request = createBaseRequest()
+                .withOrganizationName("")
+                .withActivityField("")
+                .withStartDate("")
+                .withWorkPosition("")
+                .withOrganizationPosition("")
+                .withWorkPhone("");
+
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Название организации")
+                .hasMessageContaining("Сфера деятельности")
+                .hasMessageContaining("Дата начала работы");
+    }
+
+    // ====================== Проверка незанятости ======================
+    @Test
+    @DisplayName("❌ Тип занятости — не работает, но не указана причина")
+    void shouldFailIfUnemployedWithoutReason() {
+        CreditApplicationRequest request = createBaseRequest()
+                .withEmploymentType(EmploymentType.DONT_WORK)
+                .withUnemploymentReason(null);
+
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Не указана причина незанятости");
+    }
+}
+package ru.pskb.integrator.validation;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import ru.pskb.integrator.dto.creditApplication.CreditApplicationRequest;
+import ru.pskb.integrator.enums.*;
+import ru.pskb.integrator.exception.ValidationException;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class CreditApplicationValidatorTest {
+
+    private CreditApplicationValidator validator;
+
+    @BeforeEach
+    void setUp() {
+        validator = new CreditApplicationValidator();
+    }
+
+    // ====================== Вспомогательный метод ======================
+    private CreditApplicationRequest createBaseRequest() {
+        return new CreditApplicationRequest(
+                "Иванов Иван Иванович",           // fullName
+                "01.01.1990",                    // birthDate
+                "9123456789",                    // phone
+                "9123456790",                    // registrationPhone
+                "9123456791",                    // additionalPhone
+                AdditionalPhoneOwner.MY_NUMBER,  // additionalPhoneOwner
+                null,                            // additionalPhoneOwnerFio
+                Purpose.CONSUMER,                // purpose
+                100000,                          // initialFee
+                "Hyundai",                       // carBrand
+                "Solaris",                       // carModel
+                EmploymentType.EMPLOY,           // employmentType
+                UnemploymentReason.NONE,         // unemploymentReason
+                "ООО Рога и Копыта",             // organizationName
+                "IT",                            // activityField
+                "01.02.2010",                    // startDate
+                "Разработчик",                   // workPosition
+                "Специалист",                    // organizationPosition
+                "3456789012"                     // workPhone
+        );
+    }
+
+    // ====================== Позитивный сценарий ======================
+    @Test
+    @DisplayName("✅ Валидная заявка не вызывает ошибок")
+    void validRequestShouldPass() {
+        CreditApplicationRequest request = createBaseRequest();
+        assertThatCode(() -> validator.validate(request))
+                .doesNotThrowAnyException();
+    }
+
+    // ====================== Возрастные ограничения ======================
+    @Test
+    @DisplayName("❌ Клиент младше 18 лет — ошибка")
+    void shouldFailIfUnder18() {
+        CreditApplicationRequest request = createBaseRequest().withBirthDate("01.01.2010");
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Возраст клиента должен быть не менее 18 лет");
+    }
+
+    @Test
+    @DisplayName("❌ Клиент старше 70 лет — ошибка")
+    void shouldFailIfOver70() {
+        CreditApplicationRequest request = createBaseRequest().withBirthDate("01.01.1940");
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Возраст клиента превышает допустимый предел");
+    }
+
+    @Test
+    @DisplayName("❌ Некорректный формат даты рождения — ошибка")
+    void shouldFailIfBirthDateFormatInvalid() {
+        CreditApplicationRequest request = createBaseRequest().withBirthDate("1990/01/01");
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Некорректный формат даты рождения");
+    }
+
+    // ====================== Проверка целей кредита ======================
+    @Test
+    @DisplayName("❌ Цель — покупка авто, но без марки, модели и взноса")
+    void shouldFailIfCarDataMissing() {
+        CreditApplicationRequest request
+        = createBaseRequest()
+                .withPurpose(Purpose.BUYING_NEW_CAR)
+                .withPurchaseCarBrand("")
+                .withPurchaseCarModel("")
+                .withInitialFee(0);
+
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("первоначальный взнос")
+                .hasMessageContaining("Марка автомобиля")
+                .hasMessageContaining("Модель автомобиля");
+    }
+
+    // ====================== Проверка телефонов ======================
+    @Test
+    @DisplayName("❌ Регистрационный телефон совпадает с мобильным")
+    void shouldFailIfPhonesEqual() {
+        CreditApplicationRequest request = createBaseRequest()
+                .withRegistrationPhone("9123456789");
+
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Телефон по месту регистрации не должен совпадать");
+    }
+
+    @Test
+    @DisplayName("❌ Неверный формат мобильного телефона")
+    void shouldFailIfPhoneInvalid() {
+        CreditApplicationRequest request = createBaseRequest().withPhone("123");
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Некорректный номер мобильного телефона");
+    }
+
+    // ====================== Проверка занятости ======================
+    @ParameterizedTest
+    @EnumSource(value = EmploymentType.class, names = {
+            "EMPLOY", "PUBLIC_OFFICER", "JUDGE", "OWN_BUSINESS", "MILLITARY"
+    })
+    @DisplayName("❌ Для работающих типов занятости обязательны поля по работе")
+    void shouldFailIfEmploymentDataMissingForWorkingTypes(EmploymentType type) {
+        CreditApplicationRequest request = createBaseRequest()
+                .withEmploymentType(type)
+                .withOrganizationName("")
+                .withActivityField("")
+                .withStartDate("")
+                .withWorkPosition("")
+                .withOrganizationPosition("")
+                .withWorkPhone("");
+
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Название организации")
+                .hasMessageContaining("Сфера деятельности")
+                .hasMessageContaining("Тип должности");
+    }
+
+    // ====================== Проверка незанятости ======================
+    @Test
+    @DisplayName("❌ Тип занятости — не работает, но не указана причина")
+    void shouldFailIfUnemployedWithoutReason() {
+        CreditApplicationRequest request = createBaseRequest()
+                .withEmploymentType(EmploymentType.DONT_WORK)
+                .withUnemploymentReason(null);
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Причина незанятости");
+    }
+
+    @Test
+    @DisplayName("❌ Указана причина 'OTHER', но нет описания")
+    void shouldFailIfUnemploymentReasonOtherWithoutText() {
+        CreditApplicationRequest request = createBaseRequest()
+                .withEmploymentType(EmploymentType.DONT_WORK)
+                .withUnemploymentReason(UnemploymentReason.OTHER)
+                .withOrganizationName("");
+
+        assertThatThrownBy(() -> validator.validate(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Другая причина незанятости");
+    }
+}
+
+        
+
+                
+
+        
+
