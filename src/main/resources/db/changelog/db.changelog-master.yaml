@@ -234,3 +234,1100 @@ databaseChangeLog:
               - column:
                   name: author_id
                   valueNumeric: 2
+
+
+
+
+--liquibase formatted sql
+--changeset alexandr:2025-11-16--create-activation-request-table
+CREATE TABLE IF NOT EXISTS activation_request (
+  id UUID PRIMARY KEY NOT NULL,
+  request_id VARCHAR(255) NOT NULL UNIQUE,
+  mpl_offer_id VARCHAR(255),
+  bank_offer_id VARCHAR(255),
+  loan_amount NUMERIC(19,2) NOT NULL,
+  hand_amount NUMERIC(19,2) NOT NULL,
+  term INTEGER NOT NULL,
+  rate NUMERIC(5,2) NOT NULL,
+  insurance BOOLEAN NOT NULL,
+  insurance_rate NUMERIC(5,2),
+  monthly_payment NUMERIC(19,2),
+  insurance_payment NUMERIC(19,2),
+  refinanced_payments_loans BOOLEAN DEFAULT FALSE,
+  consent_assignment_rights BOOLEAN,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP
+);
+
+--changeset alexandr:2025-11-16--create-activation-refinanced-loan-table
+CREATE TABLE IF NOT EXISTS activation_refinanced_loan (
+  id UUID PRIMARY KEY NOT NULL,
+  activation_request_id UUID NOT NULL,
+  identifier VARCHAR(255) NOT NULL,
+  refinance_sum NUMERIC(19,2) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP,
+  CONSTRAINT fk_activation_request
+    FOREIGN KEY (activation_request_id)
+    REFERENCES activation_request (id)
+);
+
+package ru.pskb.integrator.entity;
+
+import jakarta.persistence.*;
+import lombok.*;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Сущность хранит запрос на проверку актуальности оффера (ActivationCheck).
+ * Отвечает за:
+ *  - хранение параметров запроса (loanAmount, handAmount, term, rate и т.д.)
+ *  - связь 1 -> N с таблицей рефинансируемых кредитов (ActivationRefinancedLoanEntity)
+ *  - хранение метаданных created_at / updated_at
+ *
+ * Используется сервисом ActivationCheckService для сохранения, логирования и отправки в ИБСО.
+ */
+@Entity
+@Table(name = "activation_request")
+@Getter
+@Setter
+@AllArgsConstructor
+@NoArgsConstructor
+@Builder
+public class ActivationRequestEntity {
+
+    @Id
+    @GeneratedValue
+    private UUID id;
+
+    @Column(name = "request_id", nullable = false, unique = true)
+    private String requestId;
+
+    @Column(name = "mpl_offer_id")
+    private String mplOfferId;
+
+    @Column(name = "bank_offer_id")
+    private String bankOfferId;
+
+    @Column(name = "loan_amount", nullable = false)
+    private BigDecimal loanAmount;
+
+    @Column(name = "hand_amount", nullable = false)
+    private BigDecimal handAmount;
+
+    @Column(name = "term", nullable = false)
+    private Integer term;
+
+    @Column(name = "rate", nullable = false)
+    private BigDecimal rate;
+
+    @Column(name = "insurance", nullable = false)
+    private Boolean insurance;
+
+    @Column(name = "insurance_rate")
+    private BigDecimal insuranceRate;
+
+    @Column(name = "monthly_payment")
+    private BigDecimal monthlyPayment;
+
+    @Column(name = "insurance_payment")
+    private BigDecimal insurancePayment;
+
+    @Column(name = "refinanced_payments_loans")
+    private Boolean refinancedPaymentsLoans;
+
+    @Column(name = "consent_assignment_rights")
+    private Boolean consentAssignmentRights;
+
+    @OneToMany(mappedBy = "activationRequest", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    private List<ActivationRefinancedLoanEntity> refinancedLoans = new ArrayList<>();
+
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+}
+
+package ru.pskb.integrator.entity;
+
+import jakarta.persistence.*;
+import lombok.*;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+/**
+ * Сущность — отдельная строка рефинансируемого кредита, связанная с ActivationRequestEntity.
+ * Хранит identifier и рассчитанную/предложенную сумму refinanceSum.
+ */
+@Entity
+@Table(name = "activation_refinanced_loan")
+@Getter
+@Setter
+@AllArgsConstructor
+@NoArgsConstructor
+@Builder
+public class ActivationRefinancedLoanEntity {
+
+    @Id
+    @GeneratedValue
+    private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "activation_request_id", nullable = false)
+    private ActivationRequestEntity activationRequest;
+
+    @Column(name = "identifier", nullable = false)
+    private String identifier;
+
+    @Column(name = "refinance_sum", nullable = false)
+    private BigDecimal refinanceSum;
+
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+}
+
+
+
+package ru.pskb.integrator.dto.activation;
+
+import java.math.BigDecimal;
+import java.util.List;
+
+/**
+ * DTO запроса /ActivationCheck — используется в контроллере.
+ * record — по просьбе, компактно и удобно.
+ */
+public record ActivationCheckRequest(
+    String requestId,
+    String mplOfferId,
+    String bankOfferId,
+    BigDecimal loanAmount,
+    BigDecimal handAmount,
+    Integer term,
+    BigDecimal rate,
+    Boolean insurance,
+    BigDecimal insuranceRate,
+    BigDecimal monthlyPayment,
+    BigDecimal insurancePayment,
+    Boolean refinancedPaymentsLoans,
+    List<ActivationRefinancedLoanDto> refinancedLoans,
+    Boolean consentAssignmentRights
+) {}
+
+
+package ru.pskb.integrator.dto.activation;
+
+import java.math.BigDecimal;
+
+/**
+ * DTO элемента коллекции refinancedLoans
+ */
+public record ActivationRefinancedLoanDto(
+    String identifier,
+    BigDecimal refinanceSum
+) {}
+
+package ru.pskb.integrator.dto.activation;
+
+/**
+ * DTO ответа на ActivationCheck
+ */
+public record ActivationCheckResponse(
+    String status,        // "successful" или "failed"
+    String requestId,
+    String errorMessage
+) {}
+
+
+package ru.pskb.integrator.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+import ru.pskb.integrator.entity.ActivationRequestEntity;
+
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * Репозиторий для activation_request.
+ */
+@Repository
+public interface ActivationRequestRepository extends JpaRepository<ActivationRequestEntity, UUID> {
+    Optional<ActivationRequestEntity> findByRequestId(String requestId);
+}
+
+
+package ru.pskb.integrator.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+import ru.pskb.integrator.entity.ActivationRefinancedLoanEntity;
+
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Репозиторий для activation_refinanced_loan.
+ */
+@Repository
+public interface ActivationRefinancedLoanRepository extends JpaRepository<ActivationRefinancedLoanEntity, UUID> {
+    List<ActivationRefinancedLoanEntity> findAllByActivationRequestId(UUID activationRequestId);
+}
+
+
+package ru.pskb.integrator.mapper;
+
+import org.mapstruct.*;
+import ru.pskb.integrator.dto.activation.*;
+import ru.pskb.integrator.entity.*;
+
+import java.time.LocalDateTime;
+
+/**
+ * MapStruct маппер:
+ * - преобразует ActivationCheckRequest -> ActivationRequestEntity
+ * - преобразует ActivationRefinancedLoanDto -> ActivationRefinancedLoanEntity
+ *
+ * unmappedTargetPolicy = ReportingPolicy.IGNORE для удобства (можно менять на ERROR)
+ */
+@Mapper(componentModel = MappingConstants.ComponentModel.SPRING, unmappedTargetPolicy = ReportingPolicy.IGNORE)
+public interface ActivationCheckMapper {
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "refinancedLoans", ignore = true) // наполняем вручную, чтобы проставить ссылку на parent
+    @Mapping(target = "createdAt", expression = "java(java.time.LocalDateTime.now())")
+    @Mapping(target = "updatedAt", expression = "java(java.time.LocalDateTime.now())")
+    ActivationRequestEntity dtoToEntity(ActivationCheckRequest dto);
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "activationRequest", ignore = true) // установим вручную
+    @Mapping(target = "createdAt", expression = "java(java.time.LocalDateTime.now())")
+    @Mapping(target = "updatedAt", expression = "java(java.time.LocalDateTime.now())")
+    ActivationRefinancedLoanEntity refinancedDtoToEntity(ActivationRefinancedLoanDto dto);
+
+    // опционально — entity -> dto (если понадобится)
+    ActivationRefinancedLoanDto refinancedEntityToDto(ActivationRefinancedLoanEntity entity);
+}
+
+
+package ru.pskb.integrator.service;
+
+import ru.pskb.integrator.dto.activation.ActivationCheckRequest;
+import ru.pskb.integrator.dto.activation.ActivationCheckResponse;
+
+/**
+ * Сервис для обработки ActivationCheck.
+ * Сохраняет входной запрос, сохраняет/обновляет refinancedLoans,
+ * логирует изменения и отправляет запрос в ИБСО (через DirectIbsoService).
+ */
+public interface ActivationCheckService {
+    ActivationCheckResponse processActivationCheck(ActivationCheckRequest request);
+}
+
+
+package ru.pskb.integrator.service.impl;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import ru.pskb.integrator.dto.activation.*;
+import ru.pskb.integrator.entity.*;
+import ru.pskb.integrator.mapper.ActivationCheckMapper;
+import ru.pskb.integrator.repository.*;
+import ru.pskb.integrator.service.ActivationCheckService;
+import ru.pskb.integrator.ibso.DirectIbsoService;
+import ru.pskb.integrator.logging.ApplicationHistoryLogger; // предполагаемый интерфейс логгера
+
+import java.util.List;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+/**
+ * Реализация сервиса:
+ * 1) Валидирует минимально входные поля (requestId, loanAmount, handAmount, term, rate, insurance если true -> insuranceRate)
+ * 2) Сохраняет главный entity (activation_request)
+ * 3) Если refinancedPaymentsLoans = true, сохраняет коллекцию activation_refinanced_loan
+ * 4) Логирует изменение через ApplicationHistoryLogger
+ * 5) Отправляет payload в ИБСО через DirectIbsoService.sendActivationCheck(...)
+ *
+ * Важное: вся операция в одной транзакции, чтобы не было частично сохранённых данных.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class ActivationCheckServiceImpl implements ActivationCheckService {
+
+    private final ActivationRequestRepository activationRequestRepository;
+    private final ActivationRefinancedLoanRepository refinancedLoanRepository;
+    private final ActivationCheckMapper mapper;
+    private final DirectIbsoService ibsoService;
+    private final ApplicationHistoryLogger historyLogger;
+
+    @Override
+    @Transactional
+    public ActivationCheckResponse processActivationCheck(ActivationCheckRequest request) {
+        log.info("Получен ActivationCheck requestId={} mplOfferId={} bankOfferId={}",
+                request.requestId(), request.mplOfferId(), request.bankOfferId());
+
+        // 1) минимальная валидация входа
+        validateRequest(request);
+
+        // 2) Сохраняем основную сущность
+        ActivationRequestEntity entity = mapper.dtoToEntity(request);
+        // проставим requestId — убеждаемся что оно есть
+        entity.setRequestId(request.requestId());
+
+        ActivationRequestEntity saved = activationRequestRepository.save(entity);
+        log.info("Сохранён activation_request id={} requestId={}", saved.getId(), saved.getRequestId());
+
+        // 3) Сохраняем refinancedLoans если есть
+        if (Boolean.TRUE.equals(request.refinancedPaymentsLoans()) && request.refinancedLoans() != null) {
+            List<ActivationRefinancedLoanEntity> rows = request.refinancedLoans().stream()
+                    .map(dto -> {
+                        ActivationRefinancedLoanEntity row = mapper.refinancedDtoToEntity(dto);
+                        row.setActivationRequest(saved);
+                        return row;
+                    })
+                    .collect(Collectors.toList());
+
+            refinancedLoanRepository.saveAll(rows);
+            // привяжем к saved
+            saved.getRefinancedLoans().clear();
+            saved.getRefinancedLoans().addAll(rows);
+            // обновим updatedAt
+            saved.setUpdatedAt(java.time.LocalDateTime.now());
+            activationRequestRepository.save(saved);
+            log.info("Сохранены {} записей refinancedLoans для activation_request id={}", rows.size(), saved.getId());
+
+            historyLogger.logChange(
+                    saved.getRequestId(),
+                    "ACTIVATION_CHECK_REFINANCE_ADDED",
+                    saved.getLoanAmount(),
+                    saved.getTerm(),
+                    null,
+                    "Добавлены кредиты для рефинансирования: " + rows.size()
+            );
+        } else {
+            historyLogger.logChange(
+                    saved.getRequestId(),
+                    "ACTIVATION_CHECK_RECEIVED",
+                    saved.getLoanAmount(),
+                    saved.getTerm(),
+                    null,
+                    "Получен запрос проверки актуальности оффера"
+            );
+        }
+
+        // 4) Отправляем в ИБСО (stub / TODO)
+        // В ibsoService реализовать sendActivationCheck(ActivationRequestEntity) — формирует json и посылает.
+        try {
+            ibsoService.sendActivationCheck(saved); // TODO: в будущем эту операцию можно вынести в async
+        } catch (Exception ex) {
+            log.error("Ошибка при отправке в ИБСО для requestId={} : {}", saved.getRequestId(), ex.getMessage(), ex);
+            return new ActivationCheckResponse("failed", null, "Ошибка при отправке в ИБСО: " + ex.getMessage());
+        }
+
+        // 5) Успешный ответ приёма
+        return new ActivationCheckResponse("successful", saved.getRequestId(), null);
+    }
+
+    private void validateRequest(ActivationCheckRequest r) {
+        if (r.requestId() == null || r.requestId().isBlank()) {
+            throw new IllegalArgumentException("requestId обязателен");
+        }
+        if (r.loanAmount() == null || r.loanAmount().signum() <= 0) {
+            throw new IllegalArgumentException("loanAmount должен быть положительным");
+        }
+        if (r.handAmount() == null || r.handAmount().signum() < 0) {
+            throw new IllegalArgumentException("handAmount должен быть неотрицательным");
+        }
+        if (r.term() == null || r.term() <= 0) {
+            throw new IllegalArgumentException("term обязателен и должен быть > 0");
+        }
+        if (r.rate() == null || r.rate().signum() <= 0) {
+            throw new IllegalArgumentException("rate обязателен и должен быть положительным");
+        }
+        if (Boolean.TRUE.equals(r.insurance()) && (r.insuranceRate() == null || r.insuranceRate().signum() <= 0)) {
+            throw new IllegalArgumentException("insuranceRate обязателен если insurance=true");
+        }
+        // если refinancedPaymentsLoans=true, коллекция не должна быть пустой
+        if (Boolean.TRUE.equals(r.refinancedPaymentsLoans()) && (r.refinancedLoans() == null || r.refinancedLoans().isEmpty())) {
+            throw new IllegalArgumentException("refinancedLoans обязателен когда refinancedPaymentsLoans=true");
+        }
+    }
+}
+
+
+package ru.pskb.integrator.controller;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.*;
+import ru.pskb.integrator.dto.activation.*;
+import ru.pskb.integrator.service.ActivationCheckService;
+
+/**
+ * Контроллер для ActivationCheck (POST /activationCheck).
+ * Комментарии и логи на русском для удобства.
+ */
+@Slf4j
+@RestController
+@RequestMapping("/activation")
+@RequiredArgsConstructor
+public class ActivationController {
+
+    private final ActivationCheckService activationCheckService;
+
+    @PostMapping("/check")
+    @ResponseStatus(HttpStatus.OK)
+    public ActivationCheckResponse checkActivation(@RequestBody ActivationCheckRequest request) {
+        log.info("Получен call /activation/check requestId={}", request.requestId());
+        return activationCheckService.processActivationCheck(request);
+    }
+}
+
+
+package ru.pskb.integrator.ibso;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import ru.pskb.integrator.entity.ActivationRequestEntity;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * DirectIbsoService — отвечает за синхронные REST-вызовы в ИБСО.
+ * Сейчас реализован stub: формирует payload и логирует.
+ * TODO: заменить на реальный restTemplate.exchange/HttpClient с basic auth / таймаутами и обработкой ошибок.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class DirectIbsoService {
+
+    // TODO: добавить RestTemplate с таймаутами и BasicAuth
+    // private final RestTemplate restTemplate;
+    // private final IbsoProperties ibsoProperties;
+
+    public void sendActivationCheck(ActivationRequestEntity activation) {
+        // Формируем payload в виде map (пример)
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("requestId", activation.getRequestId());
+        payload.put("mplOfferId", activation.getMplOfferId());
+        payload.put("bankOfferId", activation.getBankOfferId());
+        payload.put("loanAmount", activation.getLoanAmount());
+        payload.put("handAmount", activation.getHandAmount());
+        payload.put("term", activation.getTerm());
+        payload.put("rate", activation.getRate());
+        payload.put("insurance", activation.getInsurance());
+        payload.put("insuranceRate", activation.getInsuranceRate());
+        payload.put("monthlyPayment", activation.getMonthlyPayment());
+        payload.put("insurancePayment", activation.getInsurancePayment());
+        payload.put("refinancedPaymentsLoans", activation.getRefinancedPaymentsLoans());
+        payload.put("consentAssignmentRights", activation.getConsentAssignmentRights());
+
+        if (activation.getRefinancedLoans() != null && !activation.getRefinancedLoans().isEmpty()) {
+            payload.put("refinancedLoans", activation.getRefinancedLoans().stream().map(l -> Map.of(
+                    "identifier", l.getIdentifier(),
+                    "refinanceSum", l.getRefinanceSum()
+            )).toList());
+        }
+
+        // Логируем payload (симуляция отправки)
+        log.info("=== [IBSO] Отправка ActivationCheck payload для requestId={} payload={}", activation.getRequestId(), payload);
+
+        // TODO: Здесь — реальный вызов в ИБСО:
+        // HttpHeaders headers = new HttpHeaders();
+        // headers.setContentType(MediaType.APPLICATION_JSON);
+        // headers.setBasicAuth(ibsoProperties.getUsername(), ibsoProperties.getPassword());
+        // HttpEntity<Map<String,Object>> request = new HttpEntity<>(payload, headers);
+        // ResponseEntity<ActivationResponseDto> resp = restTemplate.exchange(ibsoProperties.getUrlActivationCheck(), HttpMethod.POST, request, ActivationResponseDto.class);
+        // обработать resp.getBody() и сохранить при необходимости
+
+        // Пока — симуляция успешной отправки.
+    }
+}
+
+
+
+
+
+
+package ru.pskb.integrator.dto.activation;
+
+import java.math.BigDecimal;
+import java.util.List;
+
+/**
+ * ActivationRequest
+ * Входящая модель от маркетплейса (п.2.6). Содержит идентификаторы заявки/оффера,
+ * параметы кредита, флаг рефинансирования и коллекцию рефинансируемых кредитов (если есть).
+ *
+ * Используется контроллером ActivationController и потом маппится в сущность Activation.
+ */
+public record ActivationRequest(
+        String requestId,
+        String mplOfferId,
+        String bankOfferId,
+        BigDecimal loanAmount,
+        BigDecimal handAmount,
+        Integer term,
+        BigDecimal rate,
+        Boolean insurance,
+        BigDecimal insuranceRate,
+        BigDecimal monthlyPayment,
+        BigDecimal insurancePayment,
+        Boolean refinancedPaymentsLoans,
+        List<RefinancedLoanRequest> refinancedLoans,
+        Boolean consentAssignmentRights
+) {}
+
+/**
+ * Запись одного рефинансируемого кредита в запросе активации.
+ */
+public record RefinancedLoanRequest(
+        String identifier,
+        BigDecimal refinanceSum,
+        String contractNumber,
+        String accountNumber,
+        String bic,
+        String bankInn
+) {}
+
+/**
+ * ActivationResponse
+ * Ответ банка на POST /Activation — подтверждение приема задачи на активацию.
+ * Статус: "successful" | "failed"
+ *
+ * Используется контроллером для ответа маркетплейсу.
+ */
+public record ActivationResponse(
+        String status,
+        String errorMessage,
+        String requestId
+) {}
+
+
+package ru.pskb.integrator.entity.activation;
+
+import jakarta.persistence.*;
+import lombok.*;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Activation
+ * Сущность — запись о попытке активации оффера (п.2.6).
+ * Хранит входные параметры активации, текущий статус (PENDING / SUCCESSFUL / FAILED),
+ * сообщение об ошибке и связь с коллекцией рефинансируемых кредитов.
+ *
+ * Взаимодействует:
+ *  - контроллер /service (ActivationService) — для создания и получения статуса
+ *  - scheduler (ActivationRetryScheduler) — для повторных попыток отправки в ИБСО
+ *  - DirectIbsoService — для реального вызова активации/запроса статуса
+ */
+@Entity
+@Table(name = "activation")
+@Getter
+@Setter
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class Activation {
+
+    @Id
+    @GeneratedValue
+    @Column(name = "id", nullable = false)
+    private UUID id;
+
+    @Column(name = "request_id", nullable = false)
+    private String requestId;
+
+    @Column(name = "mpl_offer_id")
+    private String mplOfferId;
+
+    @Column(name = "bank_offer_id")
+    private String bankOfferId;
+
+    @Column(name = "loan_amount", precision = 15, scale = 2)
+    private BigDecimal loanAmount;
+
+    @Column(name = "hand_amount", precision = 15, scale = 2)
+    private BigDecimal handAmount;
+
+    @Column(name = "term")
+    private Integer term;
+
+    @Column(name = "rate", precision = 6, scale = 4)
+    private BigDecimal rate;
+
+    @Column(name = "insurance")
+    private Boolean insurance;
+
+    @Column(name = "insurance_rate", precision = 6, scale = 4)
+    private BigDecimal insuranceRate;
+
+    @Column(name = "monthly_payment", precision = 15, scale = 2)
+    private BigDecimal monthlyPayment;
+
+    @Column(name = "insurance_payment", precision = 15, scale = 2)
+    private BigDecimal insurancePayment;
+
+    @Column(name = "refinanced_flag")
+    private Boolean refinancedFlag;
+
+    @Column(name = "status", nullable = false)
+    private String status; // PENDING | SUCCESSFUL | FAILED
+
+    @Column(name = "error_message")
+    private String errorMessage;
+
+    @OneToMany(mappedBy = "activation", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    private List<ActivationRefinancedLoan> refinancedLoans;
+
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+}
+
+/**
+ * ActivationRefinancedLoan
+ * Строка с информацией по одному рефинансируемому кредиту, связанная с Activation.
+ */
+@Entity
+@Table(name = "activation_refinanced_loan")
+@Getter
+@Setter
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class ActivationRefinancedLoan {
+
+    @Id
+    @GeneratedValue
+    private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "activation_id", nullable = false)
+    private Activation activation;
+
+    @Column(name = "identifier")
+    private String identifier;
+
+    @Column(name = "refinance_sum", precision = 15, scale = 2)
+    private BigDecimal refinanceSum;
+
+    @Column(name = "contract_number")
+    private String contractNumber;
+
+    @Column(name = "account_number")
+    private String accountNumber;
+
+    @Column(name = "bic")
+    private String bic;
+
+    @Column(name = "bank_inn")
+    private String bankInn;
+}
+
+
+
+
+package ru.pskb.integrator.repository.activation;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+import ru.pskb.integrator.entity.activation.Activation;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * ActivationRepository
+ * CRUD для Activation. Также добавлены методы поиска незавершённых активаций.
+ */
+@Repository
+public interface ActivationRepository extends JpaRepository<Activation, UUID> {
+    Optional<Activation> findByRequestIdAndBankOfferId(String requestId, String bankOfferId);
+    Optional<Activation> findByRequestIdAndMplOfferId(String requestId, String mplOfferId);
+    List<Activation> findByStatus(String status);
+}
+
+
+
+package ru.pskb.integrator.mapper.activation;
+
+import org.mapstruct.*;
+import org.mapstruct.factory.Mappers;
+import ru.pskb.integrator.dto.activation.ActivationRequest;
+import ru.pskb.integrator.dto.activation.RefinancedLoanRequest;
+import ru.pskb.integrator.entity.activation.Activation;
+import ru.pskb.integrator.entity.activation.ActivationRefinancedLoan;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+/**
+ * ActivationMapper
+ * Маппинг между ActivationRequest <-> Activation сущностью и обратно.
+ * - при маппинге request -> entity выставляет createdAt/updatedAt и статус PENDING по умолчанию.
+ * - маппинг коллекции рефинансируемых кредитов.
+ */
+@Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.IGNORE)
+public interface ActivationMapper {
+
+    ActivationMapper INSTANCE = Mappers.getMapper(ActivationMapper.class);
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "status", constant = "PENDING")
+    @Mapping(target = "errorMessage", ignore = true)
+    @Mapping(target = "createdAt", expression = "java(java.time.LocalDateTime.now())")
+    @Mapping(target = "updatedAt", expression = "java(java.time.LocalDateTime.now())")
+    @Mapping(target = "refinancedLoans", source = "refinancedLoans")
+    Activation requestToEntity(ActivationRequest request);
+
+    ActivationRefinancedLoan loanRequestToEntity(RefinancedLoanRequest r);
+
+    List<ActivationRefinancedLoan> loanRequestListToEntityList(List<RefinancedLoanRequest> list);
+}
+
+
+
+package ru.pskb.integrator.service.activation;
+
+import ru.pskb.integrator.dto.activation.ActivationRequest;
+import ru.pskb.integrator.dto.activation.ActivationResponse;
+
+/**
+ * ActivationService
+ * - activate(...) — обработка запроса на активацию (п.2.6). Сохраняет запись Activation со статусом PENDING,
+ *   пытается отправить задачу в ИБСО (в try/catch). Возвращает ответ о приёме задачи.
+ * - getActivationStatus(...) — возвращает текущий статус активации (п.2.7).
+ *
+ * В реализации используются ActivationRepository, ActivationMapper, DirectIbsoService и журналирование истории.
+ */
+public interface ActivationService {
+    ActivationResponse activate(ActivationRequest request);
+    ActivationResponse getActivationStatus(String requestId, String mplOfferId, String bankOfferId);
+}
+
+
+
+package ru.pskb.integrator.service.activation;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import ru.pskb.integrator.dto.activation.ActivationRequest;
+import ru.pskb.integrator.dto.activation.ActivationResponse;
+import ru.pskb.integrator.entity.activation.Activation;
+import ru.pskb.integrator.entity.activation.ActivationRefinancedLoan;
+import ru.pskb.integrator.mapper.activation.ActivationMapper;
+import ru.pskb.integrator.repository.activation.ActivationRepository;
+import ru.pskb.integrator.service.ApplicationHistoryLogger; // уже есть в проекте
+import ru.pskb.integrator.ibso.DirectIbsoService;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * ActivationServiceImpl
+ * Реализация логики активации:
+ * - сохраняет Activation (PENDING),
+ * - пытается отправить задачу в ИБСО (в try/catch) через DirectIbsoService.sendActivation(...)
+ * - при успехе — обновляет статус в БД,
+ * - при неудаче — оставляет PENDING (scheduler повторит попытку).
+ *
+ * Также предоставляет метод получения статуса активации (getActivationStatus).
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class ActivationServiceImpl implements ActivationService {
+
+    private final ActivationRepository activationRepository;
+    private final ActivationMapper activationMapper;
+    private final DirectIbsoService directIbsoService;
+    private final ApplicationHistoryLogger historyLogger;
+
+    @Override
+    @Transactional
+    public ActivationResponse activate(ActivationRequest request) {
+        // 1) Сохраняем локальную запись (PENDING)
+        Activation activation = activationMapper.requestToEntity(request);
+
+        // временно — заполним список рефинансируемых кредитов (mapstruct не установит activation-ссылку)
+        if (request.refinancedLoans() != null && !request.refinancedLoans().isEmpty()) {
+            List<ActivationRefinancedLoan> loans = activationMapper.loanRequestListToEntityList(request.refinancedLoans());
+            loans.forEach(l -> l.setActivation(activation));
+            activation.setRefinancedLoans(loans);
+            activation.setRefinancedFlag(Boolean.TRUE);
+        } else {
+            activation.setRefinancedFlag(Boolean.FALSE);
+        }
+
+        Activation saved = activationRepository.save(activation);
+        log.info("Activation сохранён (id={}, requestId={})", saved.getId(), saved.getRequestId());
+
+        // журналируем изменение статуса
+        historyLogger.logChange(saved.getRequestId(), "ACTIVATION_CREATED", saved.getLoanAmount(), saved.getTerm(), null, "Запрос активации принят в работу");
+
+        // 2) Попытка отправить в ИБСО (в блоке try/catch — чтобы не прервать транзакцию и не потерять данные)
+        try {
+            // TODO: реализовать в DirectIbsoService метод sendActivation и вернуть результат
+            // Пример использования:
+            // var ibsoResult = directIbsoService.sendActivation(saved);
+            // симуляция:
+            var ibsoResult = directIbsoService.sendActivationSimulation(saved); // временная заглушка
+
+            if (ibsoResult != null && "successful".equalsIgnoreCase(ibsoResult.getStatus())) {
+                saved.setStatus("SUCCESSFUL");
+                saved.setErrorMessage(null);
+                saved.setUpdatedAt(LocalDateTime.now());
+                activationRepository.save(saved);
+
+                historyLogger.logChange(saved.getRequestId(), "ACTIVATION_SUCCESS", saved.getLoanAmount(), saved.getTerm(), null, "Активация успешно выполнена в ИБСО");
+                return new ActivationResponse("successful", null, saved.getRequestId());
+            } else if (ibsoResult != null && "failed".equalsIgnoreCase(ibsoResult.getStatus())) {
+                saved.setStatus("FAILED");
+                saved.setErrorMessage(ibsoResult.getErrorMessage());
+                saved.setUpdatedAt(LocalDateTime.now());
+                activationRepository.save(saved);
+
+                historyLogger.logChange(saved.getRequestId(), "ACTIVATION_FAILED", saved.getLoanAmount(), saved.getTerm(), null, "Активация завершилась с ошибкой: " + ibsoResult.getErrorMessage());
+                return new ActivationResponse("failed", ibsoResult.getErrorMessage(), saved.getRequestId());
+            } else {
+                // ibsoResult == null или pending — оставляем PENDING и вернём приём
+                log.info("Активация отправлена в ИБСО, статус ожидается. activationId={}", saved.getId());
+                return new ActivationResponse("successful", null, saved.getRequestId());
+            }
+        } catch (Exception ex) {
+            // логируем, оставляем в PENDING — шедуллер попытается позже
+            log.error("Ошибка при отправке активации в ИБСО (activationId={}): {}", saved.getId(), ex.getMessage(), ex);
+            saved.setStatus("PENDING");
+            saved.setUpdatedAt(LocalDateTime.now());
+            activationRepository.save(saved);
+
+            historyLogger.logChange(saved.getRequestId(), "ACTIVATION_SEND_ERROR", saved.getLoanAmount(), saved.getTerm(), null, "Ошибка при отправке в ИБСО: " + ex.getMessage());
+            return new ActivationResponse("successful", null, saved.getRequestId());
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ActivationResponse getActivationStatus(String requestId, String mplOfferId, String bankOfferId) {
+        // 1) Поиск локальной записи по мульти-параметру
+        Optional<Activation> byBank = (bankOfferId != null) ? activationRepository.findByRequestIdAndBankOfferId(requestId, bankOfferId) : Optional.empty();
+        Optional<Activation> byMpl = (mplOfferId != null) ? activationRepository.findByRequestIdAndMplOfferId(requestId, mplOfferId) : Optional.empty();
+
+        Activation activation = byBank.or(() -> byMpl).orElse(null);
+
+        if (activation == null) {
+            // нет локальной записи — возвращаем failed
+            return new ActivationResponse("failed", "Activation not found", requestId);
+        }
+
+        // Если статус PENDING, можно попытаться обновить у ИБСО (вне strict SLA это допустимо)
+        if ("PENDING".equalsIgnoreCase(activation.getStatus())) {
+            try {
+                // TODO: реализовать DirectIbsoService.getActivationStatus(...) или использовать существующую заглушку
+                var ibsoStatus = directIbsoService.getActivationStatusSimulation(activation.getRequestId(), activation.getMplOfferId(), activation.getBankOfferId());
+
+                if (ibsoStatus != null) {
+                    if ("successful".equalsIgnoreCase(ibsoStatus.getStatus())) {
+                        activation.setStatus("SUCCESSFUL");
+                        activation.setUpdatedAt(LocalDateTime.now());
+                        activationRepository.save(activation);
+                        return new ActivationResponse("successful", null, activation.getRequestId());
+                    } else if ("failed".equalsIgnoreCase(ibsoStatus.getStatus())) {
+                        activation.setStatus("FAILED");
+                        activation.setErrorMessage(ibsoStatus.getErrorMessage());
+                        activation.setUpdatedAt(LocalDateTime.now());
+                        activationRepository.save(activation);
+                        return new ActivationResponse("failed", ibsoStatus.getErrorMessage(), activation.getRequestId());
+                    } else {
+                        // still pending
+                        return new ActivationResponse("pending", null, activation.getRequestId());
+                    }
+                } else {
+                    return new ActivationResponse("pending", null, activation.getRequestId());
+                }
+            } catch (Exception ex) {
+                log.warn("Ошибка при запросе статуса активации в ИБСО: {}", ex.getMessage());
+                return new ActivationResponse("pending", null, activation.getRequestId());
+            }
+        }
+
+        // статус уже SUCCESSFUL или FAILED — вернуть его
+        if ("SUCCESSFUL".equalsIgnoreCase(activation.getStatus())) {
+            return new ActivationResponse("successful", null, activation.getRequestId());
+        } else {
+            return new ActivationResponse("failed", activation.getErrorMessage(), activation.getRequestId());
+        }
+    }
+}
+
+
+
+package ru.pskb.integrator.controller;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.*;
+import ru.pskb.integrator.dto.activation.ActivationRequest;
+import ru.pskb.integrator.dto.activation.ActivationResponse;
+import ru.pskb.integrator.service.activation.ActivationService;
+
+/**
+ * ActivationController
+ * - POST /activation — принимать запросы активации (п.2.6). Возвращает {status: "successful"/"failed"}.
+ * - GET  /activation/{requestId} — возвращать текущий статус активации (п.2.7).
+ *
+ * Контроллер валидирует минимально входные параметры и делегирует бизнес-логике ActivationService.
+ */
+@RestController
+@RequestMapping("/activation")
+@RequiredArgsConstructor
+public class ActivationController {
+
+    private final ActivationService activationService;
+
+    @PostMapping
+    @ResponseStatus(HttpStatus.OK)
+    public ActivationResponse activate(@RequestBody ActivationRequest request) {
+        // минимальная валидация: must have requestId и хотя бы mplOfferId или bankOfferId
+        if (request.requestId() == null || request.requestId().isBlank()) {
+            return new ActivationResponse("failed", "requestId is required", null);
+        }
+        if ((request.mplOfferId() == null || request.mplOfferId().isBlank())
+                && (request.bankOfferId() == null || request.bankOfferId().isBlank())) {
+            return new ActivationResponse("failed", "one of mplOfferId or bankOfferId is required", request.requestId());
+        }
+        return activationService.activate(request);
+    }
+
+    @GetMapping("/{requestId}")
+    @ResponseStatus(HttpStatus.OK)
+    public ActivationResponse getStatus(@PathVariable String requestId,
+                                        @RequestParam(value = "mplOfferId", required = false) String mplOfferId,
+                                        @RequestParam(value = "bankOfferId", required = false) String bankOfferId) {
+        if ((mplOfferId == null || mplOfferId.isBlank()) && (bankOfferId == null || bankOfferId.isBlank())) {
+            return new ActivationResponse("failed", "one of mplOfferId or bankOfferId is required", requestId);
+        }
+        return activationService.getActivationStatus(requestId, mplOfferId, bankOfferId);
+    }
+}
+
+
+package ru.pskb.integrator.scheduler;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+import ru.pskb.integrator.entity.activation.Activation;
+import ru.pskb.integrator.repository.activation.ActivationRepository;
+import ru.pskb.integrator.service.activation.ActivationService;
+
+import java.util.List;
+
+/**
+ * ActivationRetryScheduler
+ * Периодически (каждые 2 минуты) находит активации со статусом PENDING и пытается отправить их в ИБСО снова.
+ *
+ * Важно: в задаче используются методы ActivationService (который в свою очередь использует DirectIbsoService).
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class ActivationRetryScheduler {
+
+    private final ActivationRepository activationRepository;
+    private final ActivationService activationService;
+
+    @Scheduled(cron = "0 */2 * * * ?")
+    public void retryPendingActivations() {
+        List<Activation> pending = activationRepository.findByStatus("PENDING");
+        if (pending.isEmpty()) {
+            log.debug("ActivationRetryScheduler: нет PENDING активаций");
+            return;
+        }
+        log.info("ActivationRetryScheduler: найдено {} PENDING активаций, пытаемся повторить отправку", pending.size());
+
+        for (Activation a : pending) {
+            try {
+                activationService.getActivationStatus(a.getRequestId(), a.getMplOfferId(), a.getBankOfferId());
+            } catch (Exception ex) {
+                log.error("ActivationRetryScheduler: ошибка при повторной попытке для requestId={} : {}", a.getRequestId(), ex.getMessage());
+            }
+        }
+    }
+}
+
+
+--liquibase formatted sql
+--changeset alexandr:2025-11-17--create-activation-table.sql
+CREATE TABLE IF NOT EXISTS activation (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+    request_id VARCHAR(255) NOT NULL,
+    mpl_offer_id VARCHAR(255),
+    bank_offer_id VARCHAR(255),
+    loan_amount NUMERIC(15,2),
+    hand_amount NUMERIC(15,2),
+    term INTEGER,
+    rate NUMERIC(10,4),
+    insurance BOOLEAN,
+    insurance_rate NUMERIC(10,4),
+    monthly_payment NUMERIC(15,2),
+    insurance_payment NUMERIC(15,2),
+    refinanced_flag BOOLEAN,
+    status VARCHAR(50) NOT NULL,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+
+
+// В DirectIbsoService
+
+public ActivationResponse sendActivationSimulation(Activation activation) {
+    // Заглушка: симулируем, что ИБСО принял задачу и отправил pending
+    return new ActivationResponse("pending", null, activation.getRequestId());
+}
+
+public ActivationResponse getActivationStatusSimulation(String requestId, String mplOfferId, String bankOfferId) {
+    // Заглушка для тестов: через бизнес-логику можно менять на success/failed
+    return new ActivationResponse("pending", null, requestId);
+}
+
+// TODO: заменить simulation методами реального HTTP-вызова:
+// public ActivationResponse sendActivation(Activation activation) { ... http call ... }
+// public ActivationResponse getActivationStatus(String requestId, String mplOfferId, String bankOfferId) { ... }
+
+
+
+
+
+
+                  
