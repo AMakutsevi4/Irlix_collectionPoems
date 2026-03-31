@@ -744,4 +744,210 @@ ru.dynamika.unitsplayer.service.ServiceException: 403 : "Ошибка при о�
 
 
 
+DTO (маппинг XML → Java)
+Complexes.java (корневой элемент <complexes>)
+package dto;
 
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlElementWrapper;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
+import lombok.Data;
+
+import java.util.List;
+
+@Data
+public class Complexes {
+
+    // <complex>...</complex>
+    @JacksonXmlProperty(localName = "complex")
+    @JacksonXmlElementWrapper(useWrapping = false)
+    private List<Complex> complexes;
+}
+Complex.java
+package dto;
+
+import lombok.Data;
+
+@Data
+public class Complex {
+
+    private Long id;
+    private String name;
+    private Double latitude;
+    private Double longitude;
+    private String address;
+
+    // вложенные здания
+    private Buildings buildings;
+}
+Buildings.java
+package dto;
+
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlElementWrapper;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
+import lombok.Data;
+
+import java.util.List;
+
+@Data
+public class Buildings {
+
+    @JacksonXmlProperty(localName = "building")
+    @JacksonXmlElementWrapper(useWrapping = false)
+    private List<Building> buildings;
+}
+Building.java
+package dto;
+
+import lombok.Data;
+
+@Data
+public class Building {
+
+    private Long id;
+    private String name;
+    private Integer floors;
+
+    // вложенные квартиры
+    private Flats flats;
+}
+Flats.java
+package dto;
+
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlElementWrapper;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
+import lombok.Data;
+
+import java.util.List;
+
+@Data
+public class Flats {
+
+    @JacksonXmlProperty(localName = "flat")
+    @JacksonXmlElementWrapper(useWrapping = false)
+    private List<Flat> flats;
+}
+Flat.java
+package dto;
+
+import lombok.Data;
+
+@Data
+public class Flat {
+
+    private Long flat_id;
+    private Integer apartment;
+    private Integer floor;
+    private Integer room;
+    private Long price;
+    private Double area;
+}
+🌐 2. Сервис (загрузка + парсинг XML)
+package service;
+
+import com.fasterxml.jackson.dataformat.xml.XmlMapper;
+import dto.Complexes;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+
+@Service
+public class XmlImportService {
+
+    private final RestTemplate restTemplate = new RestTemplate();
+    private final XmlMapper xmlMapper = new XmlMapper();
+
+    /**
+     * Загружает XML по URL и парсит в Java-объекты
+     */
+    public Complexes loadFromUrl(String url) {
+        try {
+            // 1. скачиваем XML как строку
+            String xml = restTemplate.getForObject(url, String.class);
+
+            // 2. парсим XML → Java
+            return xmlMapper.readValue(xml, Complexes.class);
+
+        } catch (Exception e) {
+            throw new RuntimeException("Ошибка загрузки или парсинга XML", e);
+        }
+    }
+
+    /**
+     * Парсинг XML из строки (например, если файл локальный)
+     */
+    public Complexes loadFromString(String xml) {
+        try {
+            return xmlMapper.readValue(xml, Complexes.class);
+        } catch (Exception e) {
+            throw new RuntimeException("Ошибка парсинга XML", e);
+        }
+    }
+}
+🎮 3. Контроллер (для проверки)
+package controller;
+
+import dto.Complex;
+import dto.Complexes;
+import dto.Flat;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+import service.XmlImportService;
+
+import java.util.List;
+
+@RestController
+public class ImportController {
+
+    private final XmlImportService service;
+
+    public ImportController(XmlImportService service) {
+        this.service = service;
+    }
+
+    /**
+     * Проверочный endpoint
+     */
+    @GetMapping("/import")
+    public String importData() {
+
+        // если файл локальный — можешь читать через Files.readString(...)
+        String url = "ВСТАВЬ_ССЫЛКУ_ИЛИ_УБЕРИ_ИСПОЛЬЗУЙ_loadFromString";
+
+        Complexes complexes = service.loadFromUrl(url);
+
+        // считаем количество квартир
+        int totalFlats = complexes.getComplexes().stream()
+                .flatMap(c -> c.getBuildings().getBuildings().stream())
+                .flatMap(b -> b.getFlats().getFlats().stream())
+                .toList()
+                .size();
+
+        return "Загружено квартир: " + totalFlats;
+    }
+
+    /**
+     * Получить все квартиры (для наглядности)
+     */
+    @GetMapping("/flats")
+    public List<Flat> getFlats() {
+
+        String url = "ВСТАВЬ_ССЫЛКУ";
+
+        Complexes complexes = service.loadFromUrl(url);
+
+        return complexes.getComplexes().stream()
+                .flatMap(c -> c.getBuildings().getBuildings().stream())
+                .flatMap(b -> b.getFlats().getFlats().stream())
+                .toList();
+    }
+}
+▶️ 4. Главный класс
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class RealEstateImporterApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(RealEstateImporterApplication.class, args);
+    }
+}
