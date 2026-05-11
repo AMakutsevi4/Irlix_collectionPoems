@@ -951,3 +951,63 @@ public class RealEstateImporterApplication {
         SpringApplication.run(RealEstateImporterApplication.class, args);
     }
 }
+
+
+1) Новый метод validate для P_COMMENT
+private void sendCommentToIbso(String clientId, String comment, String username, String contextId) {
+    Document document = createDocument("OperationInteraction");
+    document.setUser(username);
+    document.setContextId(contextId);
+
+    ReqCallOper reqCallOper = new ReqCallOper();
+    reqCallOper.setObjectId(clientId);
+    reqCallOper.setFieldName("P_COMMENT");
+    reqCallOper.setActionType("validate");
+    reqCallOper.setOperationName("CL_PRIV_DNM_NEW_DOC");
+
+    ReqCallOper.Field commentField = new ReqCallOper.Field();
+    commentField.setName("P_COMMENT");
+    commentField.setValue(comment);
+    commentField.setType("VARCHAR2"); // если у вас String используется везде, можно String, но лучше VARCHAR2
+
+    ReqCallOper.Field valid = new ReqCallOper.Field();
+    valid.setName("V_VALID");
+    valid.setType("String");
+
+    ReqCallOper.Field documentTypeField = new ReqCallOper.Field();
+    documentTypeField.setName("DNM_ATTACH");
+    documentTypeField.setType("DNM_ATTACH_FILES");
+
+    reqCallOper.getField().add(commentField);
+    reqCallOper.getField().add(valid);
+    reqCallOper.getField().add(documentTypeField);
+
+    document.setReqCallOper(reqCallOper);
+
+    logger.info("Отправка комментария (validate) в ИБСО: {}", marshalDocument(document));
+    Document resultDoc = directABSService.request(document);
+    logger.info("Ответ на validate комментария из ИБСО: {}", marshalDocument(resultDoc));
+}
+2) Вставить вызов этого метода в поток перед execute
+В методе uploadDocumentsToIbso(...) после sendFileTypeToIbso(...):
+String contextId = UUID.randomUUID().toString();
+sendDefaultValidate(client.getExtId(), username, contextId);
+sendFileTypeToIbso(client.getExtId(), docTypeId, typeName, username, contextId);
+
+// ДОБАВИТЬ ЭТО:
+sendCommentToIbso(client.getExtId(), AUTO_COMMENT, username, contextId);
+
+sendDocumentsToIbso(idNameMap, client.getExtId(), username, contextId);
+3) execute оставить с P_COMMENT (лучше не убирать)
+В sendDocumentToIbso(...):
+ReqCallOper.Field commentField = new ReqCallOper.Field();
+commentField.setName("P_COMMENT");
+commentField.setValue(AUTO_COMMENT);
+commentField.setType("VARCHAR2");
+И оставляй его в reqCallOper.getField().add(commentField); — это не мешает, а чаще помогает.
+4) (Опционально, но полезно) Проверка результата AnsCallOper
+Сейчас у тебя проверка только resultDoc.getFailure(). Добавь еще:
+if (resultDoc.getAnsCallOper() != null && resultDoc.getAnsCallOper().getFailure() != null) {
+    throw new RuntimeException("Ошибка при загрузке документа в АБС: "
+            + resultDoc.getAnsCallOper().getFailure().getInfo());
+}
