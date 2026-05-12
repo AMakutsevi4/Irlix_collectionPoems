@@ -1011,3 +1011,243 @@ if (resultDoc.getAnsCallOper() != null && resultDoc.getAnsCallOper().getFailure(
     throw new RuntimeException("Ошибка при загрузке документа в АБС: "
             + resultDoc.getAnsCallOper().getFailure().getInfo());
 }
+
+
+
+
+
+package ru.dynamika.findelivery.service;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import ru.dynamika.data.developer.entities.findelivery.Client;
+import ru.dynamika.data.developer.entities.findelivery.Documents;
+import ru.dynamika.data.developer.entities.findelivery.Order;
+import ru.dynamika.findelivery.ibso.IbsoService;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class FindostavkaCallbackServiceImplTest {
+
+    @Mock
+    private IbsoService ibsoService;
+
+    @InjectMocks
+    private FindostavkaCallbackServiceImpl findostavkaCallbackService;
+
+    @Test
+    @DisplayName("Не отправляет документы, если у заказа нет клиента")
+    void copyDocumentsToIbso_shouldSkip_whenClientIsNull() {
+        Order order = buildOrder(null, List.of(doc("my_passport_scan.pdf")));
+
+        findostavkaCallbackService.copyDocumentsToIbso(order);
+
+        verify(ibsoService, never()).uploadDocumentsToIbso(anyList(), eq(null), eq("10"), eq("BOLOTOVA"), eq("Паспорт"));
+    }
+
+    @Test
+    @DisplayName("Не отправляет документы, если extId клиента пустой")
+    void copyDocumentsToIbso_shouldSkip_whenClientExtIdIsBlank() {
+        Client client = new Client();
+        client.setExtId(" ");
+        Order order = buildOrder(client, List.of(doc("my_passport_scan.pdf")));
+
+        findostavkaCallbackService.copyDocumentsToIbso(order);
+
+        verify(ibsoService, never()).uploadDocumentsToIbso(anyList(), eq(client), eq("10"), eq("BOLOTOVA"), eq("Паспорт"));
+    }
+
+    @Test
+    @DisplayName("Не отправляет документы, если список документов пустой или null")
+    void copyDocumentsToIbso_shouldSkip_whenDocumentsAbsent() {
+        Client client = client("1");
+
+        findostavkaCallbackService.copyDocumentsToIbso(buildOrder(client, null));
+        findostavkaCallbackService.copyDocumentsToIbso(buildOrder(client, List.of()));
+
+        verify(ibsoService, never()).uploadDocumentsToIbso(anyList(), eq(client), eq("10"), eq("BOLOTOVA"), eq("Паспорт"));
+    }
+
+    @Test
+    @DisplayName("Игнорирует null/пустые/checklist документы и отправляет остальные")
+    void copyDocumentsToIbso_shouldIgnoreInvalidDocs_andSendValidOnes() {
+        Client client = client("1");
+        Order order = buildOrder(
+                client,
+                List.of(
+                        null,
+                        doc(null),
+                        doc(""),
+                        doc("checklist.txt"),
+                        doc("my_passport_scan.pdf"),
+                        doc("some_other_info.docx")
+                )
+        );
+        when(ibsoService.getFileTypes()).thenReturn(fileTypesPassportAndOther());
+
+        findostavkaCallbackService.copyDocumentsToIbso(order);
+
+        assertNotNull(order.getUser());
+        verify(ibsoService).uploadDocumentsToIbso(
+                argThat(docs -> docs.size() == 1 && "my_passport_scan.pdf".equals(docs.get(0).getFileName())),
+                eq(client),
+                eq("10"),
+                eq("BOLOTOVA"),
+                eq("Паспорт")
+        );
+        verify(ibsoService).uploadDocumentsToIbso(
+                argThat(docs -> docs.size() == 1 && "some_other_info.docx".equals(docs.get(0).getFileName())),
+                eq(client),
+                eq("30"),
+                eq("BOLOTOVA"),
+                eq("Прочее")
+        );
+    }
+
+@Test
+    @DisplayName("Отправляет документы во все группы при полном наборе типов")
+    void copyDocumentsToIbso_shouldSendAllDocGroups() {
+        Client client = client("1");
+        Order order = buildOrder(
+                client,
+                List.of(
+                        doc("passport_1.pdf"),
+                        doc("zajavlenie_1.pdf"),
+                        doc("photoklienta_1.jpg"),
+                        doc("raspiska_1.pdf"),
+                        doc("personaldann_1.pdf"),
+                        doc("other_1.docx")
+                )
+        );
+        when(ibsoService.getFileTypes()).thenReturn(fileTypesAll());
+
+        findostavkaCallbackService.copyDocumentsToIbso(order);
+
+        verify(ibsoService).uploadDocumentsToIbso(anyList(), eq(client), eq("10"), eq("BOLOTOVA"), eq("Паспорт"));
+        verify(ibsoService).uploadDocumentsToIbso(anyList(), eq(client), eq("11"), eq("BOLOTOVA"), eq("Заявление"));
+        verify(ibsoService).uploadDocumentsToIbso(anyList(), eq(client), eq("12"), eq("BOLOTOVA"), eq("Фото клиента"));
+        verify(ibsoService).uploadDocumentsToIbso(anyList(), eq(client), eq("13"), eq("BOLOTOVA"), eq("Расписка"));
+        verify(ibsoService).uploadDocumentsToIbso(anyList(), eq(client), eq("14"), eq("BOLOTOVA"), eq("Персональные данные"));
+        verify(ibsoService).uploadDocumentsToIbso(anyList(), eq(client), eq("30"), eq("BOLOTOVA"), eq("Прочее"));
+        verify(ibsoService, times(6)).uploadDocumentsToIbso(anyList(), eq(client), argThat(id -> id != null && !id.isBlank()), eq("BOLOTOVA"), argThat(name -> name != null && !name.isBlank()));
+    }
+
+    @Test
+    @DisplayName("Не отправляет группу, если код типа не найден в справочнике ИБСО")
+    void copyDocumentsToIbso_shouldSkipGroup_whenTypeNotFound() {
+        Client client = client("1");
+        Order order = buildOrder(client, List.of(doc("my_passport_scan.pdf")));
+        when(ibsoService.getFileTypes()).thenReturn(List.of(Map.of("code", "FM_OTHER", "ID", "30", "name", "Прочее")));
+
+        findostavkaCallbackService.copyDocumentsToIbso(order);
+
+        verify(ibsoService, never()).uploadDocumentsToIbso(anyList(), eq(client), eq("10"), eq("BOLOTOVA"), eq("Паспорт"));
+    }
+
+    @Test
+    @DisplayName("Не пробрасывает исключение, если ИБСО не доступно")
+    void copyDocumentsToIbso_shouldNotThrow_whenIbsoFails() {
+        Client client = client("1");
+        Order order = buildOrder(client, List.of(doc("my_passport_scan.pdf")));
+        when(ibsoService.getFileTypes()).thenReturn(fileTypesPassportAndOther());
+        when(ibsoService.uploadDocumentsToIbso(anyList(), eq(client), eq("10"), eq("BOLOTOVA"), eq("Паспорт")))
+                .thenThrow(new RuntimeException("IBSO temporary error"));
+
+        findostavkaCallbackService.copyDocumentsToIbso(order);
+
+        verify(ibsoService).uploadDocumentsToIbso(anyList(), eq(client), eq("10"), eq("BOLOTOVA"), eq("Паспорт"));
+    }
+
+    private static Order buildOrder(Client client, List<Documents> documents) {
+        Order order = new Order();
+        order.setId("order-1");
+        order.setClient(client);
+        order.setDocuments(documents);
+        return order;
+    }
+
+    private static Client client(String extId) {
+        Client client = new Client();
+        client.setExtId(extId);
+        return client;
+    }
+
+    private static Documents doc(String fileName) {
+        return Documents.builder().fileName(fileName).build();
+    }
+
+    private static List<Map<String, String>> fileTypesPassportAndOther() {
+        return List.of(
+                Map.of("code", "PASSPORT", "ID", "10", "name", "Паспорт"),
+                Map.of("code", "FM_OTHER", "ID", "30", "name", "Прочее")
+        );
+    }
+private static List<Map<String, String>> fileTypesAll() {
+        return List.of(
+                Map.of("code", "PASSPORT", "ID", "10", "name", "Паспорт"),
+                Map.of("code", "BANK_SPRAV", "ID", "11", "name", "Заявление"),
+                Map.of("code", "FOTO_FACE", "ID", "12", "name", "Фото клиента"),
+                Map.of("code", "REC", "ID", "13", "name", "Расписка"),
+                Map.of("code", "SVEDENIYA_BANK", "ID", "14", "name", "Персональные данные"),
+                Map.of("code", "FM_OTHER", "ID", "30", "name", "Прочее")
+        );
+    }
+}
+
+public void copyDocumentsToIbso(Order order) {
+    try {
+        Client client = order.getClient();
+        User user = order.getUser();
+
+        if (client == null  !StringUtils.hasText(client.getExtId())) {
+            return;
+        }
+
+        if (user == null  !StringUtils.hasText(user.getUserName())) {
+            log.warn("У заказа {} отсутствует пользователь", order.getId());
+            return;
+        }
+
+        ...
+        
+        sendDocGroup(passportDocs, client, DOC_TYPE_PASSPORT, user.getUserName());
+private static Order buildOrder(Client client, List<Documents> documents) {
+    Order order = new Order();
+    order.setId("order-1");
+    order.setClient(client);
+    order.setDocuments(documents);
+
+    User user = new User();
+    user.setUserName("TEST_USER");
+
+    order.setUser(user);
+
+    return order;
+}
+
+verify(ibsoService).uploadDocumentsToIbso(
+    anyList(),
+    eq(client),
+    eq("10"),
+    anyString(),
+    eq("Паспорт")
+);
+
+
+
+
