@@ -1248,6 +1248,317 @@ verify(ibsoService).uploadDocumentsToIbso(
     eq("Паспорт")
 );
 
+@Component
+@Slf4j
+public class OrderCreateInCard extends OrderCreate {
 
+    @Autowired
+    private IbsoService ibsoService;
+
+    @Autowired
+    private CardOrderService cardOrderService;
+
+    @Override
+    public OperationResponseV3 defaultValidate(RequestV3 rp) {
+        super.defaultValidate(rp, Order.class);
+
+        CardOrder cardOrder;
+        try {
+            cardOrder = cardOrderService.findById(rp.getObjectIdList().get(0));
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException(e);
+        }
+
+        rp.getOrCreateField("clients.fio").setSingleValue(cardOrder.getClient());
+            rp.getOrCreateField("clients").setSingleValue(cardOrder.getIdComunda());
+
+            String clientPhone = ibsoService.getClientPhoneById(cardOrder.getIdComunda());
+            String formattedPhone = formatPhoneTo16Symbols(clientPhone);
+            rp.getOrCreateField("entity.phone").setSingleValue(formattedPhone);
+
+            if (StringUtils.hasText(cardOrder.getCity())) {
+                Iterable<DeliveryPoint> allPoints = repo.findAll(DeliveryPoint[].class);
+                String matchedAddressId = StreamSupport.stream(allPoints.spliterator(), false)
+                        .filter(dp -> cardOrder.getCity().equalsIgnoreCase(dp.getLabel()))
+                        .map(DeliveryPoint::getId)
+                        .findFirst()
+                        .orElse(null);
+
+                if (matchedAddressId != null) {
+                    rp.getOrCreateField("deliveryAddress").setSingleValue(matchedAddressId);
+                    rp.getOrCreateField("deliveryAddress").setReadOnly(false);
+                }
+            }
+
+
+
+        rp.setObjectId(null);
+        return null;
+    }
+
+    @Override
+    public OperationResponseV3 execute(RequestV3 rp) {
+        String phone = rp.getOrCreateField("entity.phone").getSingleValue();
+        if (StringUtils.hasText(phone) && phone.length() != 16) {
+            rp.getOrCreateField("entity.phone").setSingleValue(formatPhoneTo16Symbols(phone));
+        }
+
+        return super.execute(rp);
+    }
+
+
+    private String formatPhoneTo16Symbols(String rawPhone) {
+        if (!StringUtils.hasText(rawPhone)) {
+            return "+7 (___) ___-__-__";
+        }
+        String digits = rawPhone.replaceAll("\\D", "");
+
+        if ((digits.startsWith("7") || digits.startsWith("8")) && digits.length() > 10) {
+            digits = digits.substring(1);
+        }
+
+        if (digits.length() < 10) {
+            return rawPhone;
+        }
+
+        String code = digits.substring(0, 3);
+        String tri = digits.substring(3, 6);
+        String di1 = digits.substring(6, 8);
+        String di2 = digits.substring(8, 10);
+
+        return String.format("+7 (%s) %s-%s-%s", code, tri, di1, di2);
+    }
+}
+
+
+		Service
+@RequiredArgsConstructor
+public class CardOrderService {
+
+    @Autowired
+    private DataControllerEntityRepository repo;
+
+    @Autowired
+    private QueryApiTemplate query;
+
+    @Autowired
+    private IbsoService ibsoService;
+
+    private final DateTimeFormatter FORMATTER_DATE = DateTimeFormatter.ofPattern("[yyyy-MM-dd][dd.MM.yyyy]");
+    private final String DEFAULT_DATE = String.valueOf(LocalDate.now());
+
+    public void downloadAndSaveOrders() throws ClassNotFoundException {
+        List<Map<String, String>> remoteRecords = ibsoService.getCardOrders();
+
+        for (Map<String, String> map : remoteRecords) {
+            String extId = map.get("extId");
+
+            if (extId == null || extId.isBlank()) {
+                continue;
+            }
+
+            CardOrder cardOrder = findByExtId(extId);
+
+            if (cardOrder == null) {
+                cardOrder = new CardOrder();
+                cardOrder.setExtId(extId);
+            }
+            cardOrder.setExtId(map.get("extId"));
+            cardOrder.setNum(map.get("num"));
+            cardOrder.setStatus(map.get("status"));
+            cardOrder.setClient(map.get("client"));
+            cardOrder.setPaySystem(map.get("paySystem"));
+            cardOrder.setTarif(map.get("tarif"));
+            cardOrder.setCity(map.get("city"));
+            cardOrder.setOffice(map.get("office"));
+            String dateStr = map.get("localDate");
+            cardOrder.setLocalDate(dateStr != null ? LocalDate.parse(dateStr, FORMATTER_DATE)
+                    : LocalDate.parse(DEFAULT_DATE, FORMATTER_DATE));
+            cardOrder.setReestr(map.get("reestr"));
+            cardOrder.setCommentDetail(map.get("commentDetail"));
+            cardOrder.setIdComunda(map.get("clientId"));
+
+            String flagStr = map.get("generateFlag");
+            cardOrder.setGenerateFlag(flagStr != null ? Boolean.valueOf(flagStr) : null);
+
+            repo.save(cardOrder);
+        }
+    }
+
+    private CardOrder findByExtId(String extId) throws ClassNotFoundException {
+        return query.queryForObject("select * from fdelivery.cardorder where extid = :extid", CardOrder.class, "extid", extId)
+                .orElse(null);
+    }
+
+    public CardOrder findById(String id) throws ClassNotFoundException {
+        return query.queryForObject("select * from fdelivery.cardorder where id = :id", CardOrder.class, "id", id)
+                .orElse(null);
+    }
+
+	DeliveryPointSelectHandler
+        return ("ru_dynamika_findelivery_units_pages_operations_OrderCreate".equals(reqGetData.getOperation()) ||
+                "ru_dynamika_findelivery_units_pages_operations_OrderEdit".equals(reqGetData.getOperation()) ||
+                "ru_dynamika_findelivery_units_pages_operations_OrderCreateIBSO".equals(reqGetData.getOperation()) ||
+                "ru_dynamika_findelivery_units_pages_operations_GetOrdersReport".equals(reqGetData.getOperation())) &&
+                "deliveryAddress".equals(reqGetData.getParam());
+
+
+		// DeliveryPointSelectHandler.canHandle()
+"ru_dynamika_findelivery_units_pages_operations_OrderCreateInCard".equals(reqGetData.getOperation())
+
+
+	Override
+public OperationResponseV3 defaultValidate(RequestV3 rp) {
+    CardOrder cardOrder = cardOrderService.findById(rp.getObjectIdList().get(0));
+
+    // 1. Клиент — через ИБСО, в clients кладём внутренний id (как IBSO-операция)
+    Client client = ibsoService.findClientByExtId(cardOrder.getIdComunda());
+    rp.getOrCreateField("clients.fio").setSingleValue(client.getFio());
+    rp.getOrCreateField("clients").setSingleValue(client.getId());
+
+    // 2. Телефон
+    String phone = ibsoService.getClientPhoneById(cardOrder.getIdComunda()); // метод нужно добавить
+    rp.getOrCreateField("entity.phone").setSingleValue(formatPhoneTo16Symbols(phone));
+
+    rp.setObjectId(null);
+
+    // 3. СНАЧАЛА базовая инициализация OrderCreate
+    OperationResponseV3 response = super.defaultValidate(rp);
+
+    // 4. ПОТОМ заглушка продукта (2-й из списка) + разблокировка города
+    var items = rp.getOrCreateField("entity.productCode").getItems();
+    if (items != null && items.size() >= 2) {
+        rp.getOrCreateField("entity.productCode").setSingleValue(items.get(1).getValue());
+        rp.getOrCreateField("deliveryAddress").setReadOnly(false);
+    }
+
+    // 5. Автозаполнение города
+    if (StringUtils.hasText(cardOrder.getCity())) {
+        repo.findAll(DeliveryPoint[].class).forEach(dp -> {
+            if (cardOrder.getCity().equalsIgnoreCase(dp.getLabel())) {
+                rp.getOrCreateField("deliveryAddress").setSingleValue(dp.getId());
+                rp.getOrCreateField("deliveryAddress.name").setSingleValue(dp.getLabel());
+            }
+        });
+    }
+
+    return response;
+}
+
+		2. execute — нужен override как в OrderCreateIBSO
+Базовый OrderCreate.execute делает findClientByExtId(clients), а ты в clients кладёшь idComunda (extId). OrderCreateIBSO это обходит:
+entity.setClient(repo.findById(rp.getOrCreateField("clients").getSingleValue(), Client.class)...);
+Скопируй execute из OrderCreateIBSO, не вызывай super.execute().
+3. getClientPhoneById — в проекте нет
+В IbsoService / IbsoServiceImpl такого метода нет. В findFilteredClients телефон вообще пустой (phone = ""). Метод нужно добавить в IbsoService и реализовать через запрос клиента по clientId в ИБСО.
+Ошибки в CardOrderService
+Маппинг полей из getCardOrders() не совпадает с тем, что реально возвращает IbsoServiceImpl:
+Твой ключ
+Реальный ключ из ИБСО
+extId
+id
+num
+orderNumber
+status
+statusName
+client
+clientName
+tarif
+tariff
+localDate
+dateTime
+reestr
+registryFileName
+commentDetail
+comment
+generateFlag
+isGenerated
+Из-за этого findById может находить запись, но idComunda, city, client — пустые/null.
+Фикс маппинга:
+cardOrder.setExtId(map.get("id"));
+cardOrder.setNum(map.get("orderNumber"));
+cardOrder.setStatus(map.get("statusName"));
+cardOrder.setClient(map.get("clientName"));
+cardOrder.setPaySystem(map.get("paySystem"));
+cardOrder.setTarif(map.get("tariff"));
+cardOrder.setCity(map.get("city"));
+cardOrder.setOffice(map.get("office"));
+cardOrder.setIdComunda(map.get("clientId"));
+// dateTime, comment, isGenerated — аналогично
+Чеклист
+#
+Проблема
+Решение
+1
+Пустой список городов
+Добавить операцию в DeliveryPointSelectHandler
+2
+Нет продуктов / форма «ломается»
+Вызывать super.defaultValidate(rp), не super.defaultValidate(rp, Order.class)
+3
+Продукт не выставляется
+После super — 2-й элемент из getItems()
+4
+Город заблокирован
+После выбора продукта: deliveryAddress.setReadOnly(false)
+5
+Клиент при сохранении
+Override execute как в OrderCreateIBSO
+6
+Телефон
+Реализовать getClientPhoneById в IbsoService
+7
+Данные заявки пустые
+Исправить маппинг в CardOrderService
+8
+Форма
+Скопировать форму от OrderCreateIBSO (поле deliveryAddress типа Object с колонками name/address)
+
+
+	 Формат под маску (главное)
+private String formatPhoneTo16Symbols(String rawPhone) {
+    if (!StringUtils.hasText(rawPhone)) {
+        return null; // не подставляй placeholder с пробелами
+    }
+    String digits = rawPhone.replaceAll("\\D", "");
+    if ((digits.startsWith("7") || digits.startsWith("8")) && digits.length() > 10) {
+        digits = digits.substring(1);
+    }
+    if (digits.length() < 10) {
+        return null;
+    }
+    return String.format("+7(%s)%s-%s-%s",
+            digits.substring(0, 3),
+            digits.substring(3, 6),
+            digits.substring(6, 8),
+            digits.substring(8, 10));
+}
+2. Нормализация в execute перед checkFields
+@Override
+public OperationResponseV3 execute(RequestV3 rp) {
+    String phone = rp.getOrCreateField("entity.phone").getSingleValue();
+    String normalized = formatPhoneTo16Symbols(phone);
+    if (normalized != null) {
+        rp.getOrCreateField("entity.phone").setSingleValue(normalized);
+    }
+    return super.execute(rp);
+}
+3. Если после фикса формата всё ещё null при сохранении
+Маска иногда не отправляет значение, пока пользователь не трогал поле. Тогда в defaultValidate сохрани телефон в контекст:
+rp.getContext().put("prefilledPhone", formattedPhone);
+И в execute:
+if (!StringUtils.hasText(rp.getOrCreateField("entity.phone").getSingleValue())) {
+    String saved = rp.getContext().getValue("prefilledPhone", String.class);
+    if (StringUtils.hasText(saved)) {
+        rp.getOrCreateField("entity.phone").setSingleValue(saved);
+    }
+}
+Итог
+Причина
+Симптом
+Формат с пробелами (18 символов)
+Видно на форме, валидация не проходит
+Маска не коммитит значение без ввода
+После правки одной цифры всё работает
 
 
