@@ -1650,3 +1650,63 @@ public OperationResponseV3 defaultValidate(RequestV3 rp) {
     return super.defaultValidate(rp, Order.class);
 }
 
+public void sendCardToOeb(
+        String cardId,
+        String status,
+        String idComunda,
+        String clientId
+) {
+
+    Document document = createDocument("OperationInteraction");
+
+    ReqCallOper reqCallOper = new ReqCallOper();
+
+    reqCallOper.setObjectId(cardId);
+    reqCallOper.setOperationName("O_CARD_TO_OEB");
+    reqCallOper.setActionType("execute");
+
+
+    ReqCallOper.Field statusField = new ReqCallOper.Field();
+    statusField.setName("P_STATUS");
+    statusField.setValue(status);
+    statusField.setType("String");
+
+
+    ReqCallOper.Field comundaField = new ReqCallOper.Field();
+    comundaField.setName("P_ID_COMUNDA");
+    comundaField.setValue(idComunda);
+    comundaField.setType("String");
+
+
+    ReqCallOper.Field clientField = new ReqCallOper.Field();
+    clientField.setName("P_CLIENT");
+    clientField.setValue(clientId);
+    clientField.setType("Object");
+
+
+    ReqCallOper.Field rejectionField = new ReqCallOper.Field();
+    rejectionField.setName("P_REJECTION");
+    rejectionField.setValue("");
+    rejectionField.setType("String");
+
+
+    reqCallOper.getField().add(statusField);
+    reqCallOper.getField().add(comundaField);
+    reqCallOper.getField().add(clientField);
+    reqCallOper.getField().add(rejectionField);
+
+
+    document.setReqCallOper(reqCallOper);
+
+
+    Document result = directABSService.request(document);
+
+
+    if (result.getFailure() != null) {
+        throw new RuntimeException(
+            "Ошибка передачи в ОЭБ: "
+            + result.getFailure().getInfo()
+        );
+    }
+}
+
