@@ -1562,3 +1562,91 @@ if (!StringUtils.hasText(rp.getOrCreateField("entity.phone").getSingleValue())) 
 После правки одной цифры всё работает
 
 
+
+@Override
+public OperationResponseV3 defaultValidate(RequestV3 rp) {
+
+    try {
+
+        if (rp.getObjectIdList().size() > 1) {
+            throw new RuntimeException("Выбрано более 1 заявки");
+        }
+
+
+        CardOrder cardOrder = cardOrderService.findById(
+                rp.getObjectIdList().get(0)
+        );
+
+
+        // дата
+        rp.getOrCreateField("createOrderDate")
+                .setSingleValue(LocalDateTime.now().toString());
+
+
+        // продукт
+        cardOrderService.getActiveProductCode()
+                .ifPresent(productCode -> {
+
+                    rp.getOrCreateField("entity.productCode")
+                            .setSingleValue(productCode.getId());
+
+                    rp.getOrCreateField("entity.productCode")
+                            .setItems(List.of(
+                                    new Field.Item(
+                                            productCode.getId(),
+                                            productCode.getLabel()
+                                    )
+                            ));
+                });
+
+
+
+        // клиент
+        rp.getOrCreateField("clients.fio")
+                .setSingleValue(cardOrder.getClient());
+
+
+        rp.getOrCreateField("clients")
+                .setSingleValue(cardOrder.getIdComunda());
+
+
+
+        // телефон
+        String phone = ibsoService.getClientPhoneById(
+                cardOrder.getIdComunda()
+        );
+
+        rp.getOrCreateField("entity.phone")
+                .setSingleValue(formatPhone(phone));
+
+
+
+        // города как в родителе
+        rp.getOrCreateField("deliveryAddress")
+                .setItems(
+                    StreamSupport.stream(
+                        repo.findAll(DeliveryPoint[].class)
+                        .spliterator(),
+                        false
+                    )
+                    .map(dp -> new Field.Item(
+                            dp.getId(),
+                            dp.getLabel()
+                    ))
+                    .toList()
+                );
+
+
+        rp.getOrCreateField("deliveryAddress")
+                .setReadOnly(false);
+
+
+
+    } catch (ClassNotFoundException e) {
+        throw new RuntimeException(e);
+    }
+
+
+    return super.defaultValidate(rp, Order.class);
+}
+
