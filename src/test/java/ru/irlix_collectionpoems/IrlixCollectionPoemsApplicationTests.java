@@ -1710,3 +1710,108 @@ public void sendCardToOeb(
     }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	2026-06-24 16:00:49,720 INFO  ru.dynamika.core.service.impl.DocumentMarshaller : Unmarshalling document: 
+<?xml version="1.0" encoding="ISO-8859-5"?>
+<Document id="#" product="#" user="#">
+  <Failure>
+    <ReqName>AnsCallOper</ReqName>
+    <oper>[CIT_INTERFACE]::[DNM_CALL_OPER]</oper>
+    <info> пакет не создан
+ORA-06512: на  &quot;IBS.MESSAGE&quot;, line 51
+ORA-06512: на  &quot;IBS.Z$CIT_INTERFACE_DNM_CALL_OPER&quot;, line 1406
+</info>
+  </Failure>
+</Document>
+@Component
+@Slf4j
+public class SendOrderForOeb extends AutoInitOperation<CardOrder> {
+
+    @Autowired
+    private IbsoServiceImpl ibsoService;
+
+
+    @Override
+    public OperationResponseV3 defaultValidate(RequestV3 rp) {
+        return null;
+    }
+
+    @Override
+    public OperationResponseV3 validate(RequestV3 rp) {
+        return null;
+    }
+
+    @Override
+    public OperationResponseV3 execute(RequestV3 rp) {
+        CardOrder cardOrder = repo.findById(rp.getObjectIdList().get(0), CardOrder.class).orElseThrow(() -> new RuntimeException("Заявка не найдена"));
+        log.info("Отправка заявки {} в ОЭБ", cardOrder.getExtId());
+        ibsoService.sendCardToOeb(rp.getObjectId(), rp.getUser(), rp.getContext().toString(), cardOrder.getStatus(), cardOrder.getIdComunda(), cardOrder.getClient());
+        return null;
+    }
+}
+
+
+    public void sendCardToOeb(String objectId, String username, String contextId, String status, String idComunda, String clientId) {
+        Document document = createDocument("OperationInteraction");
+        document.setUser(username);
+        document.setContextId(contextId);
+
+        ReqCallOper reqCallOper = new ReqCallOper();
+
+        reqCallOper.setObjectId(objectId);
+        reqCallOper.setOperationName("DNM_TO_OEB_GR");
+        reqCallOper.setActionType("execute");
+        reqCallOper.setContainingView("VW_CRIT_PRI_ORDER_N_CARD");
+
+        ReqCallOper.Field statusField = new ReqCallOper.Field();
+        statusField.setName("P_STATUS");
+        statusField.setValue(status);
+        statusField.setType("String");
+
+        ReqCallOper.Field comundaField = new ReqCallOper.Field();
+        comundaField.setName("P_ID_COMUNDA");
+        comundaField.setValue(idComunda);
+        comundaField.setType("String");
+
+        ReqCallOper.Field clientField = new ReqCallOper.Field();
+        clientField.setName("P_CLIENT");
+        clientField.setValue(clientId);
+        clientField.setType("String");
+
+        ReqCallOper.Field rejectionField = new ReqCallOper.Field();
+        rejectionField.setName("P_REJECTION");
+        rejectionField.setValue("");
+        rejectionField.setType("String");
+
+        reqCallOper.getField().add(statusField);
+        reqCallOper.getField().add(comundaField);
+        reqCallOper.getField().add(clientField);
+        reqCallOper.getField().add(rejectionField);
+
+        document.setReqCallOper(reqCallOper);
+
+        logger.info("Отправка карты в ОЭБ: {}", marshalDocument(document));
+
+        Document result = directABSService.request(document);
+
+        if (result.getFailure() != null) {
+            throw new RuntimeException("Ошибка передачи в ОЭБ: " + result.getFailure().getInfo());
+        }
+    }
+}
