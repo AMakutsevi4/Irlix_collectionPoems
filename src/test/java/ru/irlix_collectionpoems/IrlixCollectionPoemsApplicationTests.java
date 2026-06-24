@@ -1815,3 +1815,239 @@ public class SendOrderForOeb extends AutoInitOperation<CardOrder> {
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	package body Z$PRI_ORDER_N_CARD_64983611976 is
+--#section PRIVATE 4
+--#section VALIDSYS 7
+--# 1,1
+	procedure O_CARD_TO_OEB_VALIDATE(THIS IN OUT NOCOPY number,PLP$CLASS IN varchar2,P_MESSAGE IN OUT NOCOPY varchar2,P_INFO IN OUT NOCOPY varchar2,P_STATUS IN OUT NOCOPY number,P_ID_COMUNDA IN OUT NOCOPY VARCHAR2,P_CLIENT IN OUT NOCOPY number,P_REJECTION IN OUT NOCOPY VARCHAR2) is
+		plp$class$	varchar2(128);
+		plp$var$	Z#PRI_ORDER_N_CARD#INTERFACE.CLASS#PRI_ORDER_N_CARD;
+--#section VALIDATE 14
+		procedure Get$Obj$This is
+			plp$id$	number;
+		begin if THIS is null then return; end if;
+			plp$id$ := THIS;
+			select C_STATUS, C_ID_COMUNDA, C_CLIENT
+			  into plp$var$.A#STATUS, plp$var$.A#ID_COMUNDA, plp$var$.A#CLIENT
+			  from Z#PRI_ORDER_N_CARD
+			 where id=plp$id$;
+		exception when NO_DATA_FOUND then
+			message.error('EXEC','OBJECT_NOT_FOUND',plp$id$);
+		end;
+	begin
+--#section VALIDSYS
+		if plp$CLASS is NULL then
+			plp$class$ := Z#PRI_ORDER_N_CARD#INTERFACE.class$(THIS);
+		elsif plp$CLASS like '$$$%' then
+			plp$class$ := Z#PRI_ORDER_N_CARD#INTERFACE.class$(THIS);
+		else plp$class$ := plp$CLASS;
+		end if;
+		rtl.read(null);
+		Get$Obj$This;
+--#section VALIDATE
+--# 2,2
+		if P_MESSAGE = 'DEFAULT' then
+--# 3,12
+			P_STATUS := plp$var$.A#STATUS;
+			P_ID_COMUNDA := plp$var$.A#ID_COMUNDA;
+			P_CLIENT := plp$var$.A#CLIENT;
+			Z$RUNTIME_CSMD.COMMAND(V_DEST_STR,'reject.Enabled = false');
+		elsif P_MESSAGE = 'VALIDATE' then
+--# 8,3
+			if P_INFO = 'P_REJECTION' and P_REJECTION is not NULL then
+--# 9,6
+				Z$RUNTIME_CSMD.COMMAND(V_DEST_STR,'reject.Enabled = true');
+			else
+--# 11,7
+				Z$RUNTIME_CSMD.COMMAND(V_DEST_STR,'reject.Enabled = false');
+			end if;
+		end if;
+		return;
+	end;
+--#section EXECUTESYS 32
+--# 1,1
+	function O_CARD_TO_OEB_EXECUTE(THIS IN number,PLP$CLASS IN varchar2,P_STATUS IN number,P_ID_COMUNDA IN VARCHAR2,P_CLIENT IN number,P_REJECTION IN VARCHAR2) return VARCHAR2 is
+		plp$class$	varchar2(128);
+		plp$THIS	number := THIS;
+		plp$var$	Z#PRI_ORDER_N_CARD#INTERFACE.CLASS#PRI_ORDER_N_CARD;
+		plp$P_ID_COMUNDA	VARCHAR2(300) := P_ID_COMUNDA;
+--#section EXECUTE 39
+--# 4,2
+		RESULT	varchar2(128);
+		REFCLIENTDOSSIERIBSO	number;
+		REQ	Z$RUNTIME_HTTP_MGR.REQ;
+		RESP	Z$RUNTIME_HTTP_MGR.RESP;
+		STR_URL	varchar2(1000);
+		ANS	varchar2(2000);
+		VURL	varchar2(200);
+--# 12,2
+		DATA	varchar2(200) := '{"variables":{"finddossier":{"value":"pvalue"}}}';
+		PSTATUS	varchar2(128);
+		JSONTASK	Z$RUNTIME_LIB_JSON.T_JSON_ELEMENT;
+		TASKID	varchar2(128);
+		procedure Set$Obj$This is
+		begin
+			if plp$THIS is null then return; end if;
+			valmgr.check_readonly;
+			update Z#PRI_ORDER_N_CARD set
+			     sn=nvl(sn,1)+1, su=rtl.uid$, C_STATUS=plp$var$.A#STATUS, C_COMMENT=plp$var$.A#COMMENT
+			    where id=plp$THIS;
+		end;
+		procedure Get$Obj$This is
+			plp$id$	number;
+		begin if plp$THIS is null then return; end if;
+			plp$id$ := plp$THIS;
+			select C_STATUS, C_COMMENT, C_ID_COMUNDA
+			  into plp$var$.A#STATUS, plp$var$.A#COMMENT, plp$var$.A#ID_COMUNDA
+			  from Z#PRI_ORDER_N_CARD
+			 where id=plp$id$;
+		exception when NO_DATA_FOUND then
+			message.error('EXEC','OBJECT_NOT_FOUND',plp$id$);
+		end;
+	begin
+--#section EXECUTESYS
+		if plp$CLASS is NULL then
+			plp$class$ := Z#PRI_ORDER_N_CARD#INTERFACE.class$(plp$THIS);
+		elsif plp$CLASS like '$$$%' then
+			plp$class$ := Z#PRI_ORDER_N_CARD#INTERFACE.class$(plp$THIS);
+		else plp$class$ := plp$CLASS;
+		end if;
+		Z#PRI_ORDER_N_CARD#INTERFACE.lock_object(plp$THIS,'[PRI_ORDER_N_CARD]::[O_CARD_TO_OEB]',plp$class$);
+		Get$Obj$This;
+--#section EXECUTE
+--# 18,23
+		REFCLIENTDOSSIERIBSO := P_CLIENT;
+		if Z$CL_PRIV_SITE_LIB.SIMPLE_IDENTIFICATION(REFCLIENTDOSSIERIBSO) = 'OK' then
+--# 20,12
+			plp$var$.A#STATUS := 523475286;
+			RESULT := 'Упрощённая идентификация пройдена успешно';
+			PSTATUS := 'IMNS_FORM';
+		else
+--# 24,12
+			plp$var$.A#STATUS := 6447314;
+			RESULT := 'fail';
+			PSTATUS := 'NO_CONFIRM';
+		end if;
+--# 29,2
+		if P_REJECTION is not NULL then
+--# 30,12
+			plp$var$.A#STATUS := 6447314;
+			RESULT := 'fail';
+			PSTATUS := 'NO_CONFIRM';
+			plp$var$.A#COMMENT := P_REJECTION;
+		end if;
+--# 35,5
+		Z$LBB_EXPORT_DATA_LBB_SITEGT.PUT('simple_identification status: '||PSTATUS,'export');
+--# 38,2
+		begin
+--# 39,3
+			Set$Obj$This;
+			cache_mgr.cache_set_savepoint ('SP64983611976CARD');
+--# 40,16
+			plp$P_ID_COMUNDA := plp$var$.A#ID_COMUNDA;
+--# 42,5
+			if COALESCE(Z$SYSTEM_PARAMS_GET.GET_EXECUTE(NULL,'SYSTEM_PARAMS','PRI_TEST_DB'),'LEXX') = 'LEXX' then
+--# 43,11
+				VURL := Z$FP_TUNE_LIB.GET_STR_VALUE('DNM_LOCATION_MOVE_PROCESS');
+			else
+--# 45,11
+				VURL := Z$FP_TUNE_LIB.GET_STR_VALUE('DNM_LOCATION_MOVE_PROCESS_TEST');
+			end if;
+--# 48,5
+			if VURL is NULL then
+--# 49,9
+				Z$LBB_EXPORT_DATA_LBB_SITEGT.PUT('Заявка на выпуск дебетовой карты O_CARD_TO_OEB: Не определен инстанс бизнес-процесса на маршруте! P_ID_COMUNDA: '||plp$P_ID_COMUNDA||' sqlerrm: '||utils.error_stack(false),'export');
+--# 51,13
+				MESSAGE.APP_ERROR('PRI_ORDER_N_CARD.O_CARD_TO_OEB','Не определен инстанс бизнес-процесса на маршруте!');
+			end if;
+--# 56,13
+			STR_URL := VURL||'/engine-rest/task?processInstanceId='||plp$P_ID_COMUNDA;
+			REQ := Z$RUNTIME_HTTP_MGR.BEGIN_REQUEST(STR_URL,'GET','HTTP/1.1');
+--# 59,8
+			Z$RUNTIME_HTTP_MGR.SET_HEADER(REQ,'Authorization','Basic '||UTL_RAW.CAST_TO_VARCHAR2(UTL_ENCODE.BASE64_ENCODE(UTL_RAW.CAST_TO_RAW('dnm:12345'))));
+			Z$RUNTIME_HTTP_MGR.SET_HEADER(REQ,'Content-Type','application/json; charset=utf8');
+			Z$RUNTIME_HTTP_MGR.SET_HEADER(REQ,'Accept','application/json');
+			Z$RUNTIME_HTTP_MGR.SET_HEADER(REQ,'Method','POST');
+--# 64,11
+			RESP := Z$RUNTIME_HTTP_MGR.GET_RESPONSE(REQ);
+--# 66,5
+			if RESP.STATUS_CODE not in ('200','204') then
+--# 67,9
+				Z$LBB_EXPORT_DATA_LBB_SITEGT.PUT('Ошибка HTTP: '||RESP.STATUS_CODE||': '||RESP.REASON_PHRASE,'export');
+			else
+--# 69,6
+				null;
+			end if;
+--# 72,6
+			Z$RUNTIME_HTTP_MGR.READ_TEXT(RESP,ANS);
+			Z$RUNTIME_HTTP_MGR.END_RESPONSE(RESP);
+			JSONTASK := Z$RUNTIME_LIB_JSON.PARSEJSON(SUBSTR(ANS,2,LENGTH(ANS)-2));
+			TASKID := Z$WEB_DATA_SWAP_LIB_JSON.GET_KEY_VALUE2(JSONTASK,'id',128);
+--# 79,10
+			DATA := REPLACE(DATA,'pvalue',PSTATUS);
+			STR_URL := VURL||'/engine-rest/task/'||TASKID||'/complete';
+--# 82,8
+			Z$LBB_EXPORT_DATA_LBB_SITEGT.PUT('Передать в ОЭБ: str_url -> '||STR_URL,'export');
+--# 84,11
+			REQ := Z$RUNTIME_HTTP_MGR.BEGIN_REQUEST(STR_URL,'POST','HTTP/1.1');
+--# 86,8
+			Z$RUNTIME_HTTP_MGR.SET_HEADER(REQ,'Authorization','Basic '||UTL_RAW.CAST_TO_VARCHAR2(UTL_ENCODE.BASE64_ENCODE(UTL_RAW.CAST_TO_RAW('dnm:12345'))));
+			Z$RUNTIME_HTTP_MGR.SET_HEADER(REQ,'Content-Type','application/json; charset=utf8');
+			Z$RUNTIME_HTTP_MGR.SET_HEADER(REQ,'Accept','application/json');
+			Z$RUNTIME_HTTP_MGR.SET_HEADER(REQ,'Method','POST');
+			Z$RUNTIME_HTTP_MGR.SET_HEADER(REQ,'Content-Length',LENGTH(DATA));
+			Z$RUNTIME_HTTP_MGR.WRITE_RAW(REQ,UTL_RAW.CAST_TO_RAW(DATA));
+--# 93,11
+			RESP := Z$RUNTIME_HTTP_MGR.GET_RESPONSE(REQ);
+--# 95,5
+			if RESP.STATUS_CODE not in ('200','204') then
+--# 96,13
+				RESULT := RESULT||'. Ошибка бизнес-процесса при передаче в ОЭБ!';
+				Z$LBB_EXPORT_DATA_LBB_SITEGT.PUT('Ошибка HTTP: '||RESP.STATUS_CODE||': '||RESP.REASON_PHRASE,'export');
+			else
+--# 99,13
+				RESULT := RESULT||'. Заявка передана в ОЭБ!';
+			end if;
+--# 102,6
+			Z$RUNTIME_HTTP_MGR.READ_TEXT(RESP,ANS);
+			Z$RUNTIME_HTTP_MGR.END_RESPONSE(RESP);
+--# 105,8
+			Z$LBB_EXPORT_DATA_LBB_SITEGT.PUT('двигаем процесс: '||ANS,'export');
+		exception
+		when Z$RUNTIME_HTTP_MGR.END_OF_BODY then
+--# 109,6
+			null;
+		when others then
+		if sqlcode in (-4061,-6508) then raise; end if;
+--# 112,7
+			cache_mgr.cache_rollback('SP64983611976CARD');
+			Z$LBB_EXPORT_DATA_LBB_SITEGT.PUT('Ошибка HTTP(2): '||utils.error_stack(false)||' url '||STR_URL,'export');
+			RESULT := RESULT||'. Ошибка бизнес-процесса при передаче в ОЭБ!';
+		end;
+--# 117,1
+		return RESULT;
+	end;
+end Z$PRI_ORDER_N_CARD_64983611976;
