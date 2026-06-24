@@ -2378,3 +2378,195 @@ P_CLIENT как Object с числовым ref
 contextId = rp.getContext().toString()
 UUID.randomUUID().toString()
 Если хочешь, в следующем сообщении можешь скинуть полный XML запроса и ответа на default для одной заявки — разберём построчно, что ИБСО вернул и что передать в execute.
+
+
+
+
+	Ок, если с O_CARD_TO_OEB та же ошибка — значит дело не в имени операции. Падает ещё до выполнения логики: на этапе, когда DNM_CALL_OPER ищет PL/SQL-пакет в Oracle.
+Что означает эта ошибка
+<oper>[CIT_INTERFACE]::[DNM_CALL_OPER]</oper>
+<info> пакет не создан</info>
+Это не «операция отработала с ошибкой». Это: ИБСО не нашла скомпилированный Oracle-пакет для вызова.
+Цепочка такая:
+Твой XML (ReqCallOper)
+    → DNM_CALL_OPER (диспетчер)
+        → ищет пакет Z$... в Oracle
+            → НЕ НАШЁЛ → "пакет не создан"
+До O_CARD_TO_OEB_EXECUTE (Camunda, идентификация и т.д.) дело даже не доходит.
+Почему CL_PRIV_DNM_NEW_DOC работает, а O_CARD_TO_OEB — нет
+В проекте есть рабочий пример — загрузка документа:
+Рабочая операция
+Твоя операция
+Имя в Java
+CL_PRIV_DNM_NEW_DOC
+O_CARD_TO_OEB
+Oracle-пакет
+Z$CL_PRIV_DNM_NEW_DOC
+Z$PRI_ORDER_N_CARD_64983611976
+Имя пакета
+= имя операции
+другое — с хэшем класса
+Ты прислал PL/SQL:
+package body Z$PRI_ORDER_N_CARD_64983611976 is
+    procedure O_CARD_TO_OEB_VALIDATE(...)
+    function  O_CARD_TO_OEB_EXECUTE(...) return VARCHAR2
+То есть процедуры лежат внутри пакета класса PRI_ORDER_N_CARD, а не в отдельном Z$O_CARD_TO_OEB.
+DNM_CALL_OPER при вызове O_CARD_TO_OEB без указания класса скорее всего ищет:
+Z$O_CARD_TO_OEB   ← такого пакета нет
+Отсюда и пакет не создан — и с DNM_TO_OEB_GR, и с O_CARD_TO_OEB.
+Главное, что нужно попробовать: передать класс
+В GetViewData класс всегда указывается:
+<View name="VW_CRIT_PRI_ORDER_N_CARD" class="PRI_ORDER_N_CARD"/>
+Для ReqCallOper класс, скорее всего, тоже обязателен, но в твоём коде его нет.
+Вариант 1 — добавить class в ReqCallOper
+ReqCallOper req = new ReqCallOper();
+req.setObjectId(ibsoOrderId);              // ID заявки из ИБСО!
+req.setOperationName("O_CARD_TO_OEB");
+req.setActionType("default");
+req.setClazz("PRI_ORDER_N_CARD");          // ← ЭТО КЛЮЧЕВОЕ
+req.setContainingView("VW_CRIT_PRI_ORDER_N_CARD");
+XML должен выглядеть так:
+<Document product="OperationInteraction" user="твой_логин" contextId="uuid" ver_xml="2016-05-04" platform="NF">
+  <ReqCallOper objectId="547774482740"
+               operationName="O_CARD_TO_OEB"
+               actionType="default"
+               class="PRI_ORDER_N_CARD"
+               containingView="VW_CRIT_PRI_ORDER_N_CARD"/>
+</Document>
+Если в твоей версии JAXB нет setClazz, попробуй setClass — посмотри автокомплит по ReqCallOper.
+Вариант 2 — полное имя операции
+req.setOperationName("PRI_ORDER_N_CARD_O_CARD_TO_OEB");
+// или
+req.setOperationName("[PRI_ORDER_N_CARD]::[O_CARD_TO_OEB]");
+Вариант 3 — комбинация
+req.setClazz("PRI_ORDER_N_CARD");
+req.setOperationName("O_CARD_TO_OEB");
+req.setContainingView("VW_CRIT_PRI_ORDER_N_CARD");
+Диагностика: 3 теста по порядку
+Тест 1 — работает ли DNM_CALL_OPER вообще
+Вызови только default для рабочей операции CL_PRIV_DNM_NEW_DOC на любом клиенте:
+Document doc = createDocument("OperationInteraction");
+doc.setUser("твой_логин_ибсо");
+doc.setContextId(UUID.randomUUID().toString());
+
+ReqCallOper req = new ReqCallOper();
+req.setObjectId("229540276331");  // любой реальный client ID
+req.setOperationName("CL_PRIV_DNM_NEW_DOC");
+req.setActionType("default");
+
+doc.setReqCallOper(req);
+Document result = directABSService.request(doc);
+Результат
+Вывод
+CL_PRIV_DNM_NEW_DOC работает
+XML-механизм ок, проблема именно в O_CARD_TO_OEB / классе
+Тоже пакет не создан
+Проблема в окружении / пользователе / подключении к другой БД
+Тест 2 — проверка пакета в Oracle
+Если есть доступ к БД ИБСО (absDs):
+-- Есть ли пакет операции?
+SELECT object_name, object_type, status
+FROM all_objects
+WHERE owner = 'IBS'
+  AND object_name LIKE '%PRI_ORDER_N_CARD%'
+ORDER BY object_name;
+
+-- Есть ли отдельный пакет O_CARD_TO_OEB (скорее всего нет)?
+SELECT object_name, status
+FROM all_objects
+WHERE owner = 'IBS'
+  AND object_name LIKE '%O_CARD%';
+Ожидаемый результат:
+•
+есть Z$PRI_ORDER_N_CARD_64983611976 (число может отличаться на твоём стенде)
+•
+нет Z$O_CARD_TO_OEB
+Если пакета класса нет или status = INVALID — из Java это не починить, нужна перекомпиляция класса PRI_ORDER_N_CARD в Администраторе ИБСО.
+Тест 3 — операция в UI ИБСО
+В самом ИБСО:
+1.
+Открой представление VW_CRIT_PRI_ORDER_N_CARD
+2.
+Встань на заявку
+3.
+Вызови операцию «Передать в ОЭБ» вручную
+Результат
+Вывод
+В UI работает
+Пакет есть, не хватает параметров в XML (скорее всего class)
+В UI тоже не работает
+Пакет не скомпилирован на этом стенде
+Минимальный рабочий запрос для проверки
+Скопируй и попробуй именно этот набор (сначала только default):
+String ibsoOrderId = "547774482740";  // реальный ID из getCardOrders
+String username    = "твой_логин";      // не "IBS", а реальный пользователь ИБСО
+String contextId   = UUID.randomUUID().toString();
+
+Document doc = createDocument("OperationInteraction");
+doc.setUser(username);
+doc.setContextId(contextId);
+
+ReqCallOper req = new ReqCallOper();
+req.setObjectId(ibsoOrderId);
+req.setOperationName("O_CARD_TO_OEB");
+req.setActionType("default");
+req.setClazz("PRI_ORDER_N_CARD");                    // попробуй
+req.setContainingView("VW_CRIT_PRI_ORDER_N_CARD");   // попробуй
+
+doc.setReqCallOper(req);
+
+logger.info("REQUEST: {}", marshalDocument(doc));
+Document result = directABSService.request(doc);
+logger.info("RESPONSE: {}", marshalDocument(result));
+Скинь оба XML (запрос и ответ) — по ним можно будет сказать точно, что не так.
+Если class не помог — обходной путь через JDBC
+В проекте уже есть прямой вызов Oracle, минуя DNM_CALL_OPER:
+// как setBlobForId в IbsoServiceImpl:
+"{? = call IBS.Z$DNM_MESS_BLOB_EXT_CALL.SETOBJ(?)}"
+Теоретически можно вызвать напрямую:
+// имя пакета узнать из SQL выше!
+String sql = "{? = call IBS.Z$PRI_ORDER_N_CARD_64983611976.O_CARD_TO_OEB_EXECUTE(?, ?, ?, ?, ?, ?)}";
+
+try (Connection conn = dataSource.getConnection();
+     CallableStatement cs = conn.prepareCall(sql)) {
+
+    cs.registerOutParameter(1, Types.VARCHAR);  // RESULT
+    cs.setLong(2, Long.parseLong(ibsoOrderId)); // THIS
+    cs.setString(3, "PRI_ORDER_N_CARD");         // PLP$CLASS
+    cs.setLong(4, statusId);                     // P_STATUS (число!)
+    cs.setString(5, idComunda);                  // P_ID_COMUNDA
+    cs.setLong(6, clientId);                   // P_CLIENT (число!)
+    cs.setString(7, null);                       // P_REJECTION
+
+    cs.execute();
+    String result = cs.getString(1);
+}
+Но:
+•
+хэш 64983611976 может отличаться на твоём стенде
+•
+это обходной путь, не основной
+•
+сначала всё равно нужен SQL из теста 2
+Чеклист: что ещё проверить
+Даже если добавишь class, убедись:
+#
+Проверка
+1
+objectId = ID из ИБСО (extId), не id из Финдоставки
+2
+user = реальный логин оператора в ИБСО (как при загрузке документов)
+3
+contextId = новый UUID, один и тот же на default + execute
+4
+Сначала default, потом execute
+5
+P_STATUS, P_CLIENT — числовые ref, тип Object, не текст
+Но повторюсь: при пакет не создан это всё вторично. Сначала нужно, чтобы DNM_CALL_OPER нашёл пакет.
+Итог
+Скорее всего у тебя не проблема Java-кода как такового, а одно из двух:
+1.
+В ReqCallOper не передаётся class="PRI_ORDER_N_CARD" — и DNM_CALL_OPER ищет несуществующий Z$O_CARD_TO_OEB
+2.
+На стенде, куда ходит directABSService, пакет класса не скомпилирован — тогда нужна команда ИБСО
+Сделай тест 1 (CL_PRIV_DNM_NEW_DOC) и тест 3 (операция в UI), и скинь XML запроса/ответа для O_CARD_TO_OEB с class. По этим трём вещам можно будет сказать на 100%, где затык.
