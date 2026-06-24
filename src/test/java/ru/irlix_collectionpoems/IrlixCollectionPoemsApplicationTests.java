@@ -2051,3 +2051,330 @@ public class SendOrderForOeb extends AutoInitOperation<CardOrder> {
 		return RESULT;
 	end;
 end Z$PRI_ORDER_N_CARD_64983611976;
+
+
+
+
+
+
+
+
+
+1. Как устроена интеграция в твоём проекте
+Все вызовы ИБСО идут через один механизм:
+Java → Document (XML) → DirectABSService.request() → ИБСО
+Базовый шаблон уже есть в IbsoServiceImpl:
+Что делаем
+product в Document
+Тег запроса
+Читаем представление
+GetViewData
+ReqGetViewData
+Вызываем операцию
+OperationInteraction
+ReqCallOper
+Ищем клиента
+CLIENT_NEW
+ReqFindClient
+Рабочий пример вызова операции — загрузка документа (CL_PRIV_DNM_NEW_DOC). Там видна правильная схема:
+1.
+default — инициализация операции
+2.
+validate — по полям (если нужно)
+3.
+execute — выполнение
+Это эталон, на который нужно ориентироваться.
+2. Главная ошибка: ты вызываешь не ту операцию
+В ИБСО у тебя две разные операции:
+A) Поштучная — O_CARD_TO_OEB
+Вызывается на одной заявке (один objectId).
+Именно её нужно дергать из Финдоставки.
+B) Списковая (batch) — DNM_TO_OEB_GR
+Это массовая операция «ДНМ. Передать в ОЭБ(списочная)».
+Внутри она просто в цикле вызывает O_CARD_TO_OEB по выделенным строкам.
+DNM_TO_OEB_GR  →  for each selected row  →  O_CARD_TO_OEB(...)
+Из внешнего Java-кода нельзя вызывать DNM_TO_OEB_GR как обычный ReqCallOper.
+Ошибка пакет не создан на DNM_CALL_OPER как раз об этом: для batch-операции нет нормального пакета для одиночного XML-вызова.
+Вывод: в operationName должно быть O_CARD_TO_OEB, а не DNM_TO_OEB_GR.
+3. Правильный алгоритм вызова O_CARD_TO_OEB
+Шаг 0. Подготовь данные
+Из getCardOrders() тебе нужен в первую очередь ID — это extId заявки в ИБСО (например 547774482740).
+Важно:
+Поле
+Что это в ИБСО
+Что у тебя сейчас
+Проблема
+objectId
+ID записи PRI_ORDER_N_CARD
+rp.getObjectId() — ID в Финдоставке
+Неверно
+P_STATUS
+Числовой ref состояния (C_STATUS)
+cardOrder.getStatus() — текст «Подготовлен»
+Неверно
+P_CLIENT
+Числовой ref клиента (C_CLIENT)
+cardOrder.getClient() — ФИО
+Неверно
+P_ID_COMUNDA
+ID Camunda-процесса
+может быть null
+Часто пусто
+P_STATUS и P_CLIENT в PL/SQL — это number / Object, не строки с названиями.
+Лучший способ: не передавать их руками, а сначала вызвать default — ИБСО сам подтянет значения из объекта:
+-- из validate O_CARD_TO_OEB:
+P_STATUS     := plp$var$.A#STATUS;      -- из Z#PRI_ORDER_N_CARD
+P_ID_COMUNDA := plp$var$.A#ID_COMUNDA;
+P_CLIENT     := plp$var$.A#CLIENT;
+Шаг 1. default — инициализация операции
+Document document = createDocument("OperationInteraction");
+document.setUser(username);           // логин оператора в ИБСО
+document.setContextId(UUID.randomUUID().toString());  // новый UUID на сессию операции!
+
+ReqCallOper req = new ReqCallOper();
+req.setObjectId(ibsoOrderId);         // extId заявки из представления, НЕ id из Финдоставки!
+req.setOperationName("O_CARD_TO_OEB");
+req.setActionType("default");
+
+document.setReqCallOper(req);
+Document defaultResult = directABSService.request(document);
+XML будет примерно таким:
+<Document product="OperationInteraction" user="operator_login" contextId="uuid-here" ver_xml="2016-05-04" platform="NF">
+  <ReqCallOper objectId="547774482740" operationName="O_CARD_TO_OEB" actionType="default"/>
+</Document>
+В ответе (AnsCallOper) ИБСО вернёт поля P_STATUS, P_ID_COMUNDA, P_CLIENT с правильными значениями. Их нужно взять для execute.
+Шаг 2. execute — выполнение
+Document document = createDocument("OperationInteraction");
+document.setUser(username);
+document.setContextId(contextId);   // тот же UUID, что в default!
+
+ReqCallOper req = new ReqCallOper();
+req.setObjectId(ibsoOrderId);
+req.setOperationName("O_CARD_TO_OEB");
+req.setActionType("execute");
+req.setContainingView("VW_CRIT_PRI_ORDER_N_CARD");
+
+// Поля из ответа default (или из БД, если сохранил)
+ReqCallOper.Field statusField = new ReqCallOper.Field();
+statusField.setName("P_STATUS");
+statusField.setValue(statusId);      // число! например "6447314"
+statusField.setType("Object");
+
+ReqCallOper.Field comundaField = new ReqCallOper.Field();
+comundaField.setName("P_ID_COMUNDA");
+comundaField.setValue(idComunda);    // строка UUID процесса
+comundaField.setType("String");
+
+ReqCallOper.Field clientField = new ReqCallOper.Field();
+clientField.setName("P_CLIENT");
+clientField.setValue(clientId);      // число! например "229540276331"
+clientField.setType("Object");
+
+ReqCallOper.Field rejectionField = new ReqCallOper.Field();
+rejectionField.setName("P_REJECTION");
+rejectionField.setValue("");         // null / пусто = без отказа
+rejectionField.setType("String");
+
+req.getField().add(statusField);
+req.getField().add(comundaField);
+req.getField().add(clientField);
+req.getField().add(rejectionField);
+
+document.setReqCallOper(req);
+Document result = directABSService.request(document);
+Шаг 3. Проверка ответа
+if (result.getFailure() != null) {
+    throw new RuntimeException("Ошибка: " + result.getFailure().getInfo());
+}
+if (result.getAnsCallOper() != null && result.getAnsCallOper().getFailure() != null) {
+    throw new RuntimeException("Ошибка операции: " + result.getAnsCallOper().getFailure().getInfo());
+}
+// успех — в AnsCallOper будет результат execute
+4. Что именно сломано в твоём sendCardToOeb
+// ❌ ПРОБЛЕМА 1: batch-операция
+reqCallOper.setOperationName("DNM_TO_OEB_GR");
+
+// ❌ ПРОБЛЕМА 2: objectId — это ID в Финдоставке, а не в ИБСО
+ibsoService.sendCardToOeb(rp.getObjectId(), ...);
+
+// ❌ ПРОБЛЕМА 3: status и client — текстовые названия, а не ref-id
+statusField.setValue(status);        // "Зарегистрирован" — нельзя
+statusField.setType("String");       // должен быть Object
+
+clientField.setValue(clientId);      // если это ФИО — нельзя
+clientField.setType("String");       // должен быть Object
+
+// ❌ ПРОБЛЕМА 4: нет шага default
+reqCallOper.setActionType("execute"); // сразу execute без default
+
+// ❌ ПРОБЛЕМА 5: contextId
+document.setContextId(rp.getContext().toString()); // нужен UUID, как в uploadDocumentToIbso
+Исправленный вызов из SendOrderForOeb:
+@Override
+public OperationResponseV3 execute(RequestV3 rp) {
+    CardOrder cardOrder = repo.findById(rp.getObjectIdList().get(0), CardOrder.class)
+        .orElseThrow(() -> new RuntimeException("Заявка не найдена"));
+
+    log.info("Отправка заявки {} в ОЭБ", cardOrder.getExtId());
+
+    ibsoService.sendCardToOeb(
+        cardOrder.getExtId(),   // ← ID из ИБСО!
+        rp.getUser(),
+        UUID.randomUUID().toString(),
+        null,                   // status — пусть default подтянет
+        null,                   // idComunda — пусть default подтянет
+        null                    // client — пусть default подтянет
+    );
+    return null;
+}
+5. Полный метод sendCardToOeb (как должно быть)
+public void sendCardToOeb(String ibsoOrderId, String username, String contextId,
+                          String status, String idComunda, String clientId) {
+
+    // === ШАГ 1: DEFAULT ===
+    Document defaultDoc = createDocument("OperationInteraction");
+    defaultDoc.setUser(username);
+    defaultDoc.setContextId(contextId);
+
+    ReqCallOper defaultReq = new ReqCallOper();
+    defaultReq.setObjectId(ibsoOrderId);
+    defaultReq.setOperationName("O_CARD_TO_OEB");
+    defaultReq.setActionType("default");
+    defaultDoc.setReqCallOper(defaultReq);
+
+    logger.info("DEFAULT O_CARD_TO_OEB: {}", marshalDocument(defaultDoc));
+    Document defaultResult = directABSService.request(defaultDoc);
+    logger.info("Ответ DEFAULT: {}", marshalDocument(defaultResult));
+
+    if (defaultResult.getFailure() != null) {
+        throw new RuntimeException("Ошибка default: " + defaultResult.getFailure().getInfo());
+    }
+
+    // Берём поля из ответа default (если не передали явно)
+  String actualStatus   = status   != null ? status   : extractField(defaultResult, "P_STATUS");
+  String actualComunda  = idComunda != null ? idComunda : extractField(defaultResult, "P_ID_COMUNDA");
+  String actualClient   = clientId != null ? clientId : extractField(defaultResult, "P_CLIENT");
+
+    // === ШАГ 2: EXECUTE ===
+    Document execDoc = createDocument("OperationInteraction");
+    execDoc.setUser(username);
+    execDoc.setContextId(contextId);
+
+    ReqCallOper execReq = new ReqCallOper();
+    execReq.setObjectId(ibsoOrderId);
+    execReq.setOperationName("O_CARD_TO_OEB");
+    execReq.setActionType("execute");
+    execReq.setContainingView("VW_CRIT_PRI_ORDER_N_CARD");
+
+    addField(execReq, "P_STATUS",     actualStatus,  "Object");
+    addField(execReq, "P_ID_COMUNDA", actualComunda, "String");
+    addField(execReq, "P_CLIENT",     actualClient,  "Object");
+    addField(execReq, "P_REJECTION",  "",            "String");
+
+    execDoc.setReqCallOper(execReq);
+
+    logger.info("EXECUTE O_CARD_TO_OEB: {}", marshalDocument(execDoc));
+    Document result = directABSService.request(execDoc);
+    logger.info("Ответ EXECUTE: {}", marshalDocument(result));
+
+    if (result.getFailure() != null) {
+        throw new RuntimeException("Ошибка execute: " + result.getFailure().getInfo());
+    }
+}
+
+private void addField(ReqCallOper req, String name, String value, String type) {
+    ReqCallOper.Field field = new ReqCallOper.Field();
+    field.setName(name);
+    field.setValue(value);
+    field.setType(type);
+    req.getField().add(field);
+}
+
+private String extractField(Document doc, String fieldName) {
+    if (doc.getAnsCallOper() == null) return null;
+    return doc.getAnsCallOper().getField().stream()
+        .filter(f -> fieldName.equals(f.getName()))
+        .map(ReqCallOper.Field::getValue)
+        .findFirst().orElse(null);
+}
+6. Что делает операция внутри ИБСО (чтобы понимать ошибки)
+По твоему PL/SQL O_CARD_TO_OEB_EXECUTE:
+1.
+Проверяет упрощённую идентификацию клиента (SIMPLE_IDENTIFICATION)
+2.
+Меняет статус заявки
+3.
+Берёт URL Camunda из настройки DNM_LOCATION_MOVE_PROCESS
+4.
+Делает HTTP GET к /engine-rest/task?processInstanceId={P_ID_COMUNDA}
+5.
+Делает HTTP POST complete задачи с {"variables":{"finddossier":{"value":"IMNS_FORM"}}}
+Типичные ошибки на этом этапе:
+Ошибка
+Причина
+пакет не создан
+Вызвана DNM_TO_OEB_GR вместо O_CARD_TO_OEB
+OBJECT_NOT_FOUND
+Неверный objectId (не extId из ИБСО)
+Не определен инстанс бизнес-процесса
+P_ID_COMUNDA пустой или процесс не существует
+HTTP ошибка Camunda
+Процесс завершён или Camunda недоступна
+Идентификация fail
+Клиент не прошёл SIMPLE_IDENTIFICATION
+7. Про ID_COMUNDA — важный момент
+В представлении VW_CRIT_PRI_ORDER_N_CARD нет колонки ID_COMUNDA.
+В getCardOrders() ты её не получишь.
+Варианты:
+1.
+Рекомендуемый: брать через default (ИБСО читает из Z#PRI_ORDER_N_CARD)
+2.
+Добавить колонку в представление ИБСО (если есть доступ к разработке ИБСО)
+3.
+Читать через ReqGetData по объекту PRI_ORDER_N_CARD
+Поэтому не сохраняй idComunda при импорте — проще всегда брать из default.
+8. Чеклист перед вызовом
+Перед execute проверь:
+•
+[ ] objectId = ID из ИБСО (колонка ID в ответе GetViewData)
+•
+[ ] operationName = O_CARD_TO_OEB
+•
+[ ] Сначала вызван default, потом execute
+•
+[ ] Один и тот же contextId (UUID) на оба шага
+•
+[ ] P_STATUS и P_CLIENT — числовые ref, тип Object
+•
+[ ] P_REJECTION — пустая строка (если нет отказа)
+•
+[ ] У заявки заполнено LATIN_CL_NAME (batch-операция фильтрует по этому полю)
+•
+[ ] Заявка в нужном состоянии (по инструкции: «Зарегистрирован» + офис «Сектор курьерской службы»)
+9. Как отладить пошагово
+1.
+Возьми одну заявку из лога getCardOrders — скопируй её ID
+2.
+Вызови только default с этим ID — посмотри XML-ответ в логе
+3.
+Убедись, что в ответе есть P_STATUS, P_CLIENT, P_ID_COMUNDA
+4.
+Вызови execute с этими значениями
+5.
+Проверь в ИБСО: состояние должно смениться на «Подготовлен»
+Краткий итог
+Было
+Должно быть
+DNM_TO_OEB_GR
+O_CARD_TO_OEB
+rp.getObjectId()
+cardOrder.getExtId()
+Сразу execute
+default → execute
+P_STATUS как String с текстом
+P_STATUS как Object с числовым ref
+P_CLIENT как String с ФИО
+P_CLIENT как Object с числовым ref
+contextId = rp.getContext().toString()
+UUID.randomUUID().toString()
+Если хочешь, в следующем сообщении можешь скинуть полный XML запроса и ответа на default для одной заявки — разберём построчно, что ИБСО вернул и что передать в execute.
