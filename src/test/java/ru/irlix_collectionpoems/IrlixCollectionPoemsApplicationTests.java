@@ -2570,3 +2570,167 @@ P_STATUS, P_CLIENT — числовые ref, тип Object, не текст
 2.
 На стенде, куда ходит directABSService, пакет класса не скомпилирован — тогда нужна команда ИБСО
 Сделай тест 1 (CL_PRIV_DNM_NEW_DOC) и тест 3 (операция в UI), и скинь XML запроса/ответа для O_CARD_TO_OEB с class. По этим трём вещам можно будет сказать на 100%, где затык.
+
+@Component
+@Slf4j
+public class OrderCreateInCard extends OrderCreate {
+
+    private static final Pattern CITY_PATTERN = Pattern.compile(
+            "\\bг\\.?\\s+([А-Яа-яЁё\\-]+)",
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS
+    );
+
+    @Autowired
+    private CardOrderService cardOrderService;
+
+    @Autowired
+    IbsoService ibsoService;
+
+    @Override
+    public OperationResponseV3 defaultValidate(RequestV3 rp) {
+        try {
+            if (rp.getObjectIdList().size() > 1) {
+                throw new RuntimeException("Выбрано более 1 заявки");
+            }
+
+            CardOrder cardOrder = cardOrderService.findById(rp.getObjectIdList().get(0));
+
+            rp.getOrCreateField("createOrderDate")
+                    .setSingleValue(LocalDateTime.now().toString());
+
+            cardOrderService.getActiveProductCode()
+                    .ifPresent(productCode -> {
+                        rp.getOrCreateField("entity.productCode")
+                                .setItems(List.of(new Field.Item(
+                                        productCode.getId(),
+                                        String.format("%s (%s)", productCode.getLabel(), productCode.getCode())
+                                )));
+                        rp.getOrCreateField("entity.productCode")
+                                .setSingleValue(productCode.getId());
+                    });
+
+            rp.getOrCreateField("clients.fio").setSingleValue(cardOrder.getClient());
+            rp.getOrCreateField("clients").setSingleValue(cardOrder.getClientId());
+
+            String phone = ibsoService.getClientPhoneById(cardOrder.getClientId());
+            rp.getGlobalContext().setValue("phone", phone);
+            rp.getOrCreateField("entity.phone").setSingleValue(formatPhone(phone));
+            rp.getOrCreateField("entity.phone").setReadOnly(false);
+
+            rp.getOrCreateField("deliveryAddress").setItems(
+                    StreamSupport.stream(repo.findAll(DeliveryPoint[].class).spliterator(), false)
+                            .filter(DeliveryPoint::isActive)
+                            .map(dp -> new Field.Item(dp.getId(), dp.getLabel()))
+                            .collect(Collectors.toList())
+            );
+            rp.getOrCreateField("deliveryAddress").setReadOnly(false);
+
+            autoSelectDeliveryPoint(rp, cardOrder);
+
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException(e);
+        }
+        return super.defaultValidate(rp, Order.class);
+    }
+
+    @Override
+    public OperationResponseV3 validate(RequestV3 rp) {
+        return super.validate(rp);
+    }
+
+    @Override
+    public OperationResponseV3 execute(RequestV3 rp) {
+        return super.execute(rp);
+    }
+
+    private void autoSelectDeliveryPoint(RequestV3 rp, CardOrder cardOrder) {
+        String clientAddress = cardOrder.getCity();
+        if (!StringUtils.hasText(clientAddress)) {
+            log.info("В заявке на карту не указан город получения, id={}", cardOrder.getId());
+            return;
+        }
+
+        Optional<DeliveryPoint> matchedPoint = findDeliveryPoint(clientAddress);
+        if (matchedPoint.isEmpty()) {
+            log.info("Пункт доставки не найден для адреса '{}' (заявка id={})",
+                    clientAddress, cardOrder.getId());
+            return;
+        }
+
+        DeliveryPoint dp = matchedPoint.get();
+        rp.getOrCreateField("deliveryAddress").setSingleValue(dp.getId());
+        rp.getOrCreateField("deliveryAddress.name").setSingleValue(dp.getLabel());
+        rp.getOrCreateField("deliveryAddress.name").setReadOnly(true);
+
+        rp.setActivatedField("deliveryAddress");
+        super.validate(rp);
+    }
+
+    private Optional<DeliveryPoint> findDeliveryPoint(String clientAddress) {
+        String city = extractCity(clientAddress);
+        if (!StringUtils.hasText(city)) {
+            return Optional.empty();
+        }
+
+        return StreamSupport.stream(repo.findAll(DeliveryPoint[].class).spliterator(), false)
+                .filter(DeliveryPoint::isActive)
+                .filter(dp -> matchesCity(clientAddress, dp))
+                .min(Comparator.comparingInt(dp -> matchPriority(city, clientAddress, dp)));
+    }
+
+    private int matchPriority(String city, String clientAddress, DeliveryPoint dp) {
+        if (extractCity(dp.getLabel()).equalsIgnoreCase(city)) {
+            return 0;
+        }
+        if (checkDelivery(clientAddress, dp.getLabel())) {
+            return 1;
+        }
+        return 2;
+    }
+
+    private boolean matchesCity(String clientAddress, DeliveryPoint dp) {
+        return checkDelivery(clientAddress, dp.getLabel())
+                || checkDelivery(clientAddress, dp.getAddress());
+    }
+
+    private static String extractCity(String address) {
+        if (!StringUtils.hasText(address)) {
+            return "";
+        }
+
+        Matcher matcher = CITY_PATTERN.matcher(address);
+        if (matcher.find()) {
+            return matcher.group(1).trim();
+        }
+
+        String firstPart = address.split(",")[0].trim();
+        return firstPart.replaceAll("[^А-Яа-яЁё\\-]", "");
+    }
+
+    private static boolean checkDelivery(String userAddress, String deliveryEntity) {
+        String city = extractCity(userAddress);
+        if (!StringUtils.hasText(city) || deliveryEntity == null) {
+            return false;
+        }
+        return deliveryEntity.toLowerCase().contains(city.toLowerCase());
+    }
+
+    private String formatPhone(String phone) {
+        String digits = phone.replaceAll("\\D", "");
+
+        if ((digits.startsWith("7") || digits.startsWith("8")) && digits.length() > 10) {
+            digits = digits.substring(1);
+        }
+
+        if (digits.length() < 10) {
+            return phone;
+        }
+
+        String code = digits.substring(0, 3);
+        String one = digits.substring(3, 6);
+        String two = digits.substring(6, 8);
+        String three = digits.substring(8, 10);
+
+        return String.format("+7 (%s) %s-%s-%s", code, one, two, three);
+    }
+}
