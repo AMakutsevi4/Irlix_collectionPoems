@@ -3700,3 +3700,90 @@ public class IbsoServiceImpl implements IbsoService {
     }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ public void downloadCardReestr(String clientExtId, String username, String contextId) {
+        Document document = requestCardReestr(clientExtId, username, contextId, "default", null, false);
+        document = requestCardReestr(clientExtId, username, contextId, "validate", "V_EMBOSS_NAME", true);
+        document = requestCardReestr(clientExtId, username, contextId, "execute", null, true);
+
+        while (hasPendingSaveAsCalls(document)) {
+            Call call = document.getAnsCallOper().getCalls().getCall().get(0);
+
+            Document plpDocument = createDocument("OperationInteraction");
+            plpDocument.setUser(username);
+            plpDocument.setContextId(contextId);
+
+            ReqCallOper plpReq = new ReqCallOper();
+            plpReq.setObjectId(clientExtId);
+            plpReq.setOperationName("CL_PRIV_PRI_CARD_REESTR");
+            plpReq.setContainingView("VW_CRIT_PRI_ORDER_N_CARD");
+            plpReq.setActionType("call");
+            plpReq.getCall().add(call);
+            plpDocument.setReqCallOper(plpReq);
+
+            document = directABSService.request(plpDocument);
+            logger.info("Реестр SAVE_AS: {}", marshalDocument(document));
+        }
+    }
+
+
+
+private Document requestCardReestr(String clientExtId, String username, String contextId,
+                                       String actionType, String fieldName, boolean withEmbossFields) {
+        Document document = createDocument("OperationInteraction");
+        document.setUser(username);
+        document.setContextId(contextId);
+
+        ReqCallOper req = new ReqCallOper();
+	 req.setObjectId(clientExtId);
+        req.setOperationName("CL_PRIV_PRI_CARD_REESTR");
+        req.setActionType(actionType);
+        req.setContainingView("VW_CRIT_PRI_ORDER_N_CARD");
+        if (StringUtils.hasText(fieldName)) {
+            req.setFieldName(fieldName);
+        }
+        if (withEmbossFields) {
+            addReestrField(req, "V_VALID", "");
+            addReestrField(req, "V_EMBOSS_LAST_NAME", "");
+            addReestrField(req, "V_EMBOSS_NAME", "");
+            addReestrField(req, "V_CODE_WORD", "");
+        }
+
+        document.setReqCallOper(req);
+
+	 document = directABSService.request(document);
+        logger.info("Реестр {}: {}", actionType, marshalDocument(document));
+        return document;
+    }
+
+    private void addReestrField(ReqCallOper req, String name, String value) {
+        ReqCallOper.Field field = new ReqCallOper.Field();
+        field.setName(name);
+        field.setValue(value);
+        field.setType("String");
+        req.getField().add(field);
+    }
+
+
+private boolean hasPendingSaveAsCalls(Document document) {
+        return document.getAnsCallOper() != null
+                && document.getAnsCallOper().getCalls() != null
+                && !document.getAnsCallOper().getCalls().getCall().isEmpty();
+    }
