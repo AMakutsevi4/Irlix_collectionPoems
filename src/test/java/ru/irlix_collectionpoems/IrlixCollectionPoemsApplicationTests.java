@@ -2734,3 +2734,969 @@ public class OrderCreateInCard extends OrderCreate {
         return String.format("+7 (%s) %s-%s-%s", code, one, two, three);
     }
 }
+
+
+
+
+package ru.dynamika.findelivery.ibso;
+
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+
+@Getter
+@AllArgsConstructor
+public class DownloadedIbsoFile {
+    private final String fileName;
+    private final String fileId;
+}
+
+
+
+package ru.dynamika.findelivery.ibso;
+
+import ru.dynamika.app.module.api.file.exceptions.FileAvailabilityException;
+import ru.dynamika.data.developer.entities.findelivery.Client;
+import ru.dynamika.data.developer.entities.findelivery.Documents;
+import ru.dynamika.unitsplayer.model.generated.ReqFindClient;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+
+public interface IbsoService {
+
+    Client findClientByInn(String inn);
+
+    Client findClientByExtId(String extId);
+
+    List<Map<String, String>> findFilteredClients(ReqFindClient reqFindClient);
+
+    void uploadDocumentToIbso(Documents documents, Client client, String docTypeId, String username, String typeName) throws FileAvailabilityException, IOException;
+
+    List<Map<String, String>> getFileTypes();
+
+    List<Map<String, String>> findFilteredOrganizations(Map<String, String> filterParams);
+
+    Map<String, String> findOrganizationById(String orgId);
+
+    List<Map<String, String>> getCardOrders();
+
+    List<Map<String, String>> getClientDetails(String clientExtId);
+
+    String getClientPhoneById(String clientExtId);
+
+    void sendCardToOeb(String objectId, String username, String contextId, String status, String idComunda, String clientId);
+
+    List<DownloadedIbsoFile> downloadCardReestr(String objectId, String username, String contextId, String latinClName);
+}
+
+
+
+package ru.dynamika.findelivery.ibso;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.stereotype.Service;
+import ru.dynamika.data.developer.entities.findelivery.Client;
+import ru.dynamika.data.developer.entities.findelivery.Documents;
+import ru.dynamika.unitsplayer.model.generated.ReqFindClient;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+
+@Slf4j
+@Service
+@ConditionalOnMissingBean(name = {"absDs"})
+public class IbsoServiceStub implements IbsoService {
+
+    @Override
+    public Client findClientByInn(String inn) {
+        log.warn("IbsoServiceStub findClientByInn!");
+        return null;
+    }
+
+    @Override
+    public Client findClientByExtId(String extId) {
+        log.warn("IbsoServiceStub findClientByExtId!");
+        return null;
+    }
+
+    public Map<String, String> findOrganizationById(String orgId) {
+        log.warn("IbsoServiceStub findOrganizationById!");
+        return Collections.EMPTY_MAP;
+    }
+
+    @Override
+    public List<Map<String, String>> getCardOrders() {
+        return Collections.EMPTY_LIST;
+    }
+
+    @Override
+    public List<Map<String, String>> getClientDetails(String clientExtId) {
+        return List.of();
+    }
+
+    @Override
+    public String getClientPhoneById(String clientExtId) {
+        return "";
+    }
+
+    @Override
+    public void sendCardToOeb(String objectId, String username, String contextId, String status, String idComunda, String clientId) {
+
+    }
+
+    @Override
+    public List<DownloadedIbsoFile> downloadCardReestr(String objectId, String username, String contextId, String latinClName) {
+        log.warn("IbsoServiceStub downloadCardReestr!");
+        return Collections.emptyList();
+    }
+
+    public List<Map<String, String>> findFilteredOrganizations(Map<String, String> filterParams) {
+        log.warn("IbsoServiceStub findFilteredOrganizations!");
+        return Collections.EMPTY_LIST;
+    }
+
+    @Override
+    public List<Map<String, String>> findFilteredClients(ReqFindClient reqFindClient) {
+        log.warn("IbsoServiceStub findFilteredClients!");
+        return Collections.EMPTY_LIST;
+    }
+
+    @Override
+    public void uploadDocumentToIbso(Documents documents, Client client, String docTypeId, String username, String typeName) {
+        log.warn("IbsoServiceStub uploadDocumentToIbso!");
+    }
+
+    public List<Map<String, String>> getFileTypes() {
+        log.warn("IbsoServiceStub getFileTypes!");
+        return Collections.EMPTY_LIST;
+
+
+    }
+}
+
+
+
+
+package ru.dynamika.findelivery.units.pages.operations;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+import ru.dynamika.app.module.api.operation.model.Attachment;
+import ru.dynamika.app.module.api.operation.model.FileStructure;
+import ru.dynamika.app.module.api.operation.model.OperationResponseV3;
+import ru.dynamika.app.module.api.operation.model.RequestV3;
+import ru.dynamika.app.module.api.operation.service.AutoInitOperation;
+import ru.dynamika.data.developer.entities.findelivery.CardOrder;
+import ru.dynamika.findelivery.ibso.DownloadedIbsoFile;
+import ru.dynamika.findelivery.ibso.IbsoService;
+
+import java.util.List;
+import java.util.UUID;
+
+@Component
+@Slf4j
+public class SendOrderForOeb extends AutoInitOperation<CardOrder> {
+
+    @Autowired
+    private IbsoService ibsoService;
+
+
+    @Override
+    public OperationResponseV3 defaultValidate(RequestV3 rp) {
+        return null;
+    }
+
+    @Override
+    public OperationResponseV3 validate(RequestV3 rp) {
+        return null;
+    }
+
+    @Override
+    public OperationResponseV3 execute(RequestV3 rp) {
+        CardOrder cardOrder = repo.findById(rp.getObjectIdList().get(0), CardOrder.class)
+                .orElseThrow(() -> new RuntimeException("Заявка не найдена"));
+
+        log.info("Отправка заявки {} в ОЭБ", cardOrder.getExtId());
+
+  //      ibsoService.sendCardToOeb(
+  //              cardOrder.getExtId(),
+ //               rp.getUser(),
+ //               UUID.randomUUID().toString(),
+ //               null,
+ //               null,
+//                null
+//        );
+
+        List<DownloadedIbsoFile> reestrFiles = ibsoService.downloadCardReestr(
+                cardOrder.getExtId(),
+                rp.getUser(),
+                UUID.randomUUID().toString(),
+                cardOrder.getLatinClName()
+        );
+
+        if (reestrFiles.isEmpty()) {
+            throw new RuntimeException("ИБСО не вернул файлы реестра");
+        }
+
+        if (reestrFiles.size() > 1) {
+            log.info("ИБСО вернул {} файлов реестра, оператору будет показан первый", reestrFiles.size());
+        }
+
+        DownloadedIbsoFile reestrFile = reestrFiles.get(0);
+        return OperationResponseV3.builder()
+                .attachment(Attachment.builder()
+                        .file(FileStructure.builder()
+                                .id(reestrFile.getFileId())
+                                .name(reestrFile.getFileName())
+                                .ext("xlsx")
+                                .build())
+                        .build())
+                .build();
+    }
+}
+
+
+
+package ru.dynamika.findelivery.ibso;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+import ru.dynamika.app.module.api.common.service.ContextService;
+import ru.dynamika.app.module.api.file.exceptions.FileAvailabilityException;
+import ru.dynamika.app.module.api.file.service.MinioFileService;
+import ru.dynamika.core.service.impl.DataSourceConfig;
+import ru.dynamika.core.service.impl.DirectABSService;
+import ru.dynamika.core.service.impl.DocumentMarshaller;
+import ru.dynamika.data.developer.DataControllerEntityRepository;
+import ru.dynamika.data.developer.QueryApiTemplate;
+import ru.dynamika.data.developer.entities.findelivery.Client;
+import ru.dynamika.data.developer.entities.findelivery.Documents;
+import ru.dynamika.unitsplayer.model.generated.AnsGetData;
+import ru.dynamika.unitsplayer.model.generated.Data;
+import ru.dynamika.unitsplayer.model.generated.Document;
+import ru.dynamika.unitsplayer.model.generated.FieldData;
+import ru.dynamika.unitsplayer.model.generated.Call;
+import ru.dynamika.unitsplayer.model.generated.ReqCallOper;
+import ru.dynamika.unitsplayer.model.generated.ReqFindClient;
+import ru.dynamika.unitsplayer.model.generated.ReqGetData;
+import ru.dynamika.unitsplayer.model.generated.ReqGetViewData;
+import ru.dynamika.unitsplayer.model.generated.ReqUniversal;
+
+import jakarta.annotation.Nonnull;
+
+import javax.sql.DataSource;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.sql.Blob;
+import java.sql.CallableStatement;
+import java.sql.Connection;
+import java.sql.Types;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+@Service
+@ConditionalOnBean(name = {"absDs"})
+public class IbsoServiceImpl implements IbsoService {
+
+    public static final String FILE_FUNCTION_SIGNATURE_SET = "{? = call IBS.Z$DNM_MESS_BLOB_EXT_CALL.SETOBJ(?)}";
+    private static final String FILE_FUNCTION_SIGNATURE_GET = "{? = call IBS.Z$DNM_MESS_BLOB_EXT_CALL.GETOBJ(?)}";
+    private static final String CARD_REESTR_OPERATION = "PRI_ORDER_N_CARD_DNM_CARD_REESTR";
+    private static final String CARD_REESTR_VIEW = "VW_CRIT_PRI_ORDER_N_CARD";
+    private static final String PROTOCOL_VERSION = "2016-05-04";
+    private static final String PLATFORM = "NF";
+    private static final String USER = "IBS";
+    private final Logger logger = LoggerFactory.getLogger(this.getClass());
+    @Value("${findostavka.document.type}")
+    private String docType;
+
+    @Autowired
+    private DataControllerEntityRepository repo;
+    @Autowired
+    private MinioFileService minioFileService;
+    @Autowired
+    private QueryApiTemplate query;
+    @Lazy
+    @Autowired
+    private DirectABSService directABSService;
+    @Autowired
+    private DocumentMarshaller marshaller;
+    @Autowired
+    @Qualifier("absDs")
+    private DataSource dataSource;
+
+    protected Document createDocument(@Nonnull String product) {
+        Document result = new Document();
+        result.setProduct(product);
+        result.setVerXml(PROTOCOL_VERSION);
+        result.setPlatform(PLATFORM);
+        result.setUser(USER);
+        return result;
+    }
+
+    @Override
+    public Client findClientByInn(String inn) {
+        ReqFindClient reqFindClient = new ReqFindClient();
+        reqFindClient.setInn(inn);
+
+        try {
+            List<Map<String, String>> clients = findFilteredClients(reqFindClient);
+            if (clients.isEmpty()) {
+                throw new RuntimeException("Клиент не найден в ИБСО, инн: " + inn);
+            }
+
+            Client client = query.queryForObject("select * from fdelivery.client where inn = :inn", Client.class, "inn", inn)
+                    .orElse(new Client());
+
+            mapToClient(clients.get(0), client);
+
+            return repo.save(client);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public Client findClientByExtId(String extId) {
+        if (!StringUtils.hasText(extId)) {
+            throw new RuntimeException("Не передано id клиента");
+        }
+
+        ReqFindClient reqFindClient = new ReqFindClient();
+        reqFindClient.setClientId(extId);
+
+        try {
+            List<Map<String, String>> clients = findFilteredClients(reqFindClient);
+            if (clients.isEmpty()) {
+                throw new RuntimeException("Клиент не найден в ИБСО");
+            }
+
+            Client client = query.queryForObject("select * from fdelivery.client where extid = :extId", Client.class, "extId", extId)
+                    .orElse(new Client());
+
+            mapToClient(clients.get(0), client);
+
+            return repo.save(client);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private ReqUniversal fillUniversalReq(Map<String, String> params) {
+        ReqUniversal reqUniversal = new ReqUniversal();
+        reqUniversal.setRequestName("FindOrg");
+
+        Data data = new Data();
+        Data.Fields fields = new Data.Fields();
+
+        for (Map.Entry<String, String> stringStringEntry : params.entrySet()) {
+            FieldData fieldData = new FieldData();
+            fieldData.setName(stringStringEntry.getKey());
+            fieldData.setSimpleValue(stringStringEntry.getValue());
+            fields.getField().add(fieldData);
+        }
+
+        data.setFields(fields);
+        reqUniversal.setData(data);
+
+        return reqUniversal;
+    }
+
+    public Map<String, String> findOrganizationById(String orgId) {
+        Map<String, String> params = new HashMap<>();
+        params.put("id", orgId);
+        List<Map<String, String>> result = findFilteredOrganizations(params);
+        if (result == null || result.isEmpty()) {
+            logger.error("Не найдена организация в ИБСО c id {}", orgId);
+            throw new RuntimeException("Не найдена организация в ИБСО с id " + orgId);
+        }
+        return result.get(0);
+    }
+
+    public List<Map<String, String>> findFilteredOrganizations(Map<String, String> filterParams) {
+
+        ReqUniversal reqUniversal = fillUniversalReq(filterParams);
+
+        Document document = createDocument("DNM_ORG");
+        document.setReqUniversal(reqUniversal);
+        Document answerDocument = null;
+
+        try {
+            logger.info("Отправка запроса на получение организаций из ИБСО: {}", marshalDocument(document));
+            answerDocument = directABSService.request(document);
+        } catch (Exception e) {
+            logger.error("Ошибка при получении организаций из ИБСО: {}", marshalDocument(answerDocument), e);
+            throw new RuntimeException("Ошибка при получении клиентов из ИБСО", e);
+        }
+
+        if (answerDocument.getFailure() != null) {
+            throw new RuntimeException(answerDocument.getFailure().getInfo());
+        }
+
+        List<Map<String, String>> result = new ArrayList<>();
+        for (FieldData fieldData : answerDocument.getAnsUniversal().getData().getFields().getField()) {
+            for (FieldData item : fieldData.getArray().getItem()) {
+                Map<String, String> orgMap = new HashMap<>();
+                for (FieldData field : item.getObjectFields().getField()) {
+                    String name = field.getName();
+                    name = name.equals("id") ? name.toUpperCase() : name;
+                    orgMap.put(name, field.getSimpleValue());
+                }
+                result.add(orgMap);
+            }
+        }
+
+        return result;
+    }
+
+    private void mapToClient(Map<String, String> map, Client client) {
+        client.setInn(map.getOrDefault("inn", client.getInn()));
+        client.setFio(map.getOrDefault("fio", client.getFio()));
+        client.setExtId(map.getOrDefault("ID", client.getExtId()));
+    }
+
+    private String marshalDocument(Document document) {
+        if (document == null) {
+            return "null";
+        }
+
+        try {
+            return marshaller.marshal(document);
+        } catch (Exception e) {
+            throw new RuntimeException("Ошибка при переводе документа в строку ", e);
+        }
+    }
+
+    @Override
+    public List<Map<String, String>> findFilteredClients(ReqFindClient reqFindClient) {
+        Document document = createDocument("CLIENT_NEW");
+        document.setReqFindClient(reqFindClient);
+        Document answerDocument = null;
+
+        try {
+            logger.info("Отправка запроса на получение клиентов из ИБСО: {}", marshalDocument(document));
+            answerDocument = directABSService.request(document);
+        } catch (Exception e) {
+            logger.error("Ошибка при получении клиентов из ИБСО: {}", marshalDocument(answerDocument));
+            throw new RuntimeException("Ошибка при получении клиентов из ИБСО", e);
+        }
+
+        if (answerDocument.getAnsFindClient().getFailure() != null) {
+            throw new RuntimeException(answerDocument.getAnsFindClient().getFailure().getInfo());
+        }
+
+        if (answerDocument.getAnsFindClient().getExactClients() == null) {
+            return new ArrayList<>();
+        }
+
+        List<Map<String, String>> result = new ArrayList<>();
+        for (ru.dynamika.unitsplayer.model.generated.Client client : answerDocument.getAnsFindClient().getExactClients().getClient()) {
+            Map<String, String> clientMap = new HashMap<>();
+            clientMap.put("ID", client.getId());
+            clientMap.put("inn", client.getInn());
+            clientMap.put("fio", String.join(" ", client.getSurname(), client.getFirstname(), client.getMiddlename()));
+            clientMap.put("birthdate", client.getBirthdate()); //форматы: дд-мм-гггг или дд.мм.гггг
+            clientMap.put("passport", client.getMainDoc()); // Форматы: "1111 222222" или "1111222222"
+            clientMap.put("phone", ""); //TODO: телефон возможно есть в contacts, но нет клиентов в ibso с заполненным contacts
+            result.add(clientMap);
+        }
+        return result;
+    }
+
+    @Override
+    public void uploadDocumentToIbso(Documents documents, Client client, String docTypeId, String username, String typeName) throws FileAvailabilityException, IOException {
+        String[] fileParts = documents.getFileId().split("/");
+        byte[] fileContent = minioFileService.getFile(fileParts[1]).getStream().readAllBytes();
+        String objectId = setBlobForId(fileContent);
+        String fileName = documents.getFileName();
+        if (!fileName.endsWith(documents.getFileExt())) {
+            fileName = String.join(".", fileName, documents.getFileExt());
+        }
+        String contextId = UUID.randomUUID().toString();
+
+        sendDefaultValidate(client.getExtId(), username, contextId);
+
+        sendFileTypeToIbso(client.getExtId(), docTypeId, typeName, username, contextId);
+
+        sendDocumentToIbso(objectId, client.getExtId(), fileName, username, contextId);
+    }
+
+    private String setBlobForId(byte[] content) {
+        try (Connection connection = dataSource.getConnection()) {
+            CallableStatement callableStatement = connection.prepareCall(FILE_FUNCTION_SIGNATURE_SET);
+            callableStatement.registerOutParameter(1, Types.VARCHAR);
+            callableStatement.setBlob(2, new ByteArrayInputStream(content));
+            callableStatement.execute();
+            String fileId = callableStatement.getString(1);
+            return fileId;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private byte[] getBlobById(String blobId) {
+        try (Connection connection = dataSource.getConnection()) {
+            CallableStatement callableStatement = connection.prepareCall(FILE_FUNCTION_SIGNATURE_GET);
+            callableStatement.registerOutParameter(1, Types.BLOB);
+            callableStatement.setString(2, blobId);
+            callableStatement.execute();
+            Blob blob = callableStatement.getBlob(1);
+            if (blob == null) {
+                throw new RuntimeException("ИБСО не вернул содержимое файла для id " + blobId);
+            }
+            return blob.getBytes(1, (int) blob.length());
+        } catch (Exception e) {
+            throw new RuntimeException("Ошибка при получении файла из ИБСО", e);
+        }
+    }
+
+    private void addOperationField(ReqCallOper req, String name, String value, String type) {
+        ReqCallOper.Field field = new ReqCallOper.Field();
+        field.setName(name);
+        field.setValue(value);
+        field.setType(type);
+        req.getField().add(field);
+    }
+
+    private void checkOperationFailure(Document document) {
+        if (document.getFailure() != null && document.getFailure().getInfo() != null) {
+            throw new RuntimeException("Ошибка ИБСО: " + document.getFailure().getInfo());
+        }
+        if (document.getAnsCallOper() == null) {
+            return;
+        }
+        if (document.getAnsCallOper().getFailure() != null
+                && document.getAnsCallOper().getFailure().getInfo() != null) {
+            throw new RuntimeException("Ошибка операции: " + document.getAnsCallOper().getFailure().getInfo());
+        }
+    }
+
+    private Document sendCardReestrStep(String actionType, String objectId, String username, String contextId,
+                                        String latinClName, String fieldName) {
+        Document document = createDocument("OperationInteraction");
+        document.setUser(username);
+        document.setContextId(contextId);
+
+        ReqCallOper req = new ReqCallOper();
+        req.setObjectId(objectId);
+        req.setOperationName(CARD_REESTR_OPERATION);
+        req.setActionType(actionType);
+        req.setContainingView(CARD_REESTR_VIEW);
+        if (StringUtils.hasText(fieldName)) {
+            req.setFieldName(fieldName);
+        }
+
+        if ("validate".equals(actionType) || "execute".equals(actionType)) {
+            addOperationField(req, "V_VALID", "", "String");
+            addOperationField(req, "LATIN_CL_NAME", latinClName != null ? latinClName : "", "String");
+        }
+
+        document.setReqCallOper(req);
+        logger.info("Отправка {} формирования реестра в ИБСО: {}", actionType, marshalDocument(document));
+        Document result = directABSService.request(document);
+        logger.info("Ответ ИБСО {} формирования реестра: {}", actionType, marshalDocument(result));
+        checkOperationFailure(result);
+        return result;
+    }
+
+    private Document sendPlpCall(String objectId, String username, String contextId, Call call) {
+        Document document = createDocument("OperationInteraction");
+        document.setUser(username);
+        document.setContextId(contextId);
+
+        ReqCallOper req = new ReqCallOper();
+        req.setObjectId(objectId);
+        req.setOperationName(CARD_REESTR_OPERATION);
+        req.setContainingView(CARD_REESTR_VIEW);
+        req.setActionType("call");
+        req.getCall().add(call);
+
+        document.setReqCallOper(req);
+        logger.info("Отправка PLPCALL {} в ИБСО: {}", call.getOperID(), marshalDocument(document));
+        Document result = directABSService.request(document);
+        logger.info("Ответ PLPCALL {} из ИБСО: {}", call.getOperID(), marshalDocument(result));
+        checkOperationFailure(result);
+        return result;
+    }
+
+    private List<Call> getPendingCalls(Document document) {
+        if (document.getAnsCallOper() == null || document.getAnsCallOper().getCalls() == null) {
+            return List.of();
+        }
+        return document.getAnsCallOper().getCalls().getCall();
+    }
+
+    private DownloadedIbsoFile saveReportFromResponse(Document document, int index) {
+        String blobId = extractBlobId(document);
+        String fileName = extractFileName(document, index);
+        byte[] content = getBlobById(blobId);
+        String fileId = UUID.randomUUID().toString();
+        minioFileService.putFileWithId(fileId, new ByteArrayInputStream(content));
+        return new DownloadedIbsoFile(fileName, fileId);
+    }
+
+    private String extractBlobId(Document document) {
+        if (document.getAnsCallOper() != null
+                && document.getAnsCallOper().getAnsReport() != null
+                && StringUtils.hasText(document.getAnsCallOper().getAnsReport().getObjectId())) {
+            return document.getAnsCallOper().getAnsReport().getObjectId();
+        }
+        if (document.getAnsCallOper() != null
+                && document.getAnsCallOper().getAnsReport() != null
+                && StringUtils.hasText(document.getAnsCallOper().getAnsReport().getId())) {
+            return document.getAnsCallOper().getAnsReport().getId();
+        }
+        throw new RuntimeException("ИБСО не вернул идентификатор файла реестра");
+    }
+
+    private String extractFileName(Document document, int index) {
+        if (document.getAnsCallOper() != null
+                && document.getAnsCallOper().getAnsReport() != null
+                && StringUtils.hasText(document.getAnsCallOper().getAnsReport().getName())) {
+            return document.getAnsCallOper().getAnsReport().getName();
+        }
+        return "reestr_" + index + ".xlsx";
+    }
+
+    private Document processPendingCalls(Document document, String objectId, String username, String contextId,
+                                         List<DownloadedIbsoFile> downloadedFiles) {
+        List<Call> pendingCalls = getPendingCalls(document);
+        int callIndex = downloadedFiles.size();
+        while (!pendingCalls.isEmpty()) {
+            Call call = pendingCalls.get(0);
+            document = sendPlpCall(objectId, username, contextId, call);
+            downloadedFiles.add(saveReportFromResponse(document, callIndex++));
+            pendingCalls = getPendingCalls(document);
+        }
+        return document;
+    }
+
+    public List<Map<String, String>> getFileTypes() {
+        Document document = createDocument("GET_VIEW_DATA");
+        ReqGetData reqGetData = new ReqGetData();
+        reqGetData.setOperation("DNM_NEW_DOC");
+        reqGetData.setClazz("CL_PRIV");
+        reqGetData.setParam("P_TYPE_REF");
+        document.setReqGetData(reqGetData);
+        Document answerDocument = directABSService.request(document);
+
+        if (answerDocument.getAnsGetData() == null) {
+            logger.error("Ошибка при получении типов документов из ибсо: " + marshalDocument(answerDocument));
+            throw new RuntimeException("Ошибка при получении типов документов из ИБСО");
+        }
+
+        List<Map<String, String>> types = answerDocument.getAnsGetData().getRecords().getRecord().stream()
+                .map(record -> {
+                    Map<String, String> result = new HashMap<>();
+                    for (AnsGetData.Records.Record.Column column : record.getColumn()) {
+                        // С_ переменные используются для отображения на нашем стенде
+                        if ("C_CODE".equals(column.getName())) {
+                            result.put("code", column.getValue());
+                        }
+                        if ("CODE".equals(column.getName())) {
+                            result.put("code", column.getValue());
+                        }
+                        if ("C_NAME".equals(column.getName())) {
+                            result.put("name", column.getValue());
+                        }
+                        if ("NAME".equals(column.getName())) {
+                            result.put("name", column.getValue());
+                        }
+                        if ("ID".equals(column.getName())) {
+                            result.put("ID", column.getValue());
+                        }
+                    }
+                    return result;
+                })
+                .filter(map -> map.containsKey("ID"))
+                .collect(Collectors.toList());
+
+        return types;
+    }
+
+    private void sendDefaultValidate(String clientId, String username, String contextId) {
+        Document document = createDocument("OperationInteraction");
+        document.setUser(username);
+        document.setContextId(contextId);
+        ReqCallOper reqCallOper = new ReqCallOper();
+        reqCallOper.setObjectId(clientId);
+        reqCallOper.setActionType("default");
+        reqCallOper.setOperationName("CL_PRIV_DNM_NEW_DOC");
+
+        ReqCallOper.Field clientField = new ReqCallOper.Field();
+        clientField.setName("P_CLIENT");
+        clientField.setValue(clientId);
+        clientField.setType("Object");
+        reqCallOper.getField().add(clientField);
+
+        document.setReqCallOper(reqCallOper);
+        logger.info("Отправка default в ИБСО: {}", marshalDocument(document));
+        Document resultDoc = directABSService.request(document);
+        logger.info("Ответ default из ИБСО: {}", marshalDocument(resultDoc));
+    }
+
+    private void sendFileTypeToIbso(String clientId, String typeId, String typeName, String username, String contextId) {
+        Document document = createDocument("OperationInteraction");
+        document.setUser(username);
+        document.setContextId(contextId);
+        ReqCallOper reqCallOper = new ReqCallOper();
+        reqCallOper.setObjectId(clientId);
+        reqCallOper.setFieldName("P_TYPE_REF");
+        reqCallOper.setActionType("validate");
+        reqCallOper.setOperationName("CL_PRIV_DNM_NEW_DOC");
+        ReqCallOper.Field typeField = new ReqCallOper.Field();
+        typeField.setName("P_TYPE_REF");
+        typeField.setValue(typeId);
+        typeField.setType("Object");
+        ReqCallOper.Field typeFieldName = new ReqCallOper.Field();
+        typeFieldName.setName("P_TYPE_REF.NAME");
+        typeFieldName.setValue(typeName);
+        typeFieldName.setType("String");
+        ReqCallOper.Field valid = new ReqCallOper.Field();
+        valid.setName("V_VALID");
+        valid.setType("String");
+        ReqCallOper.Field documentTypeField = new ReqCallOper.Field();
+        documentTypeField.setName("DNM_ATTACH");
+        documentTypeField.setType("DNM_ATTACH_FILES");
+        reqCallOper.getField().add(typeField);
+        reqCallOper.getField().add(typeFieldName);
+        reqCallOper.getField().add(valid);
+        reqCallOper.getField().add(documentTypeField);
+
+        document.setReqCallOper(reqCallOper);
+
+        logger.info("Отправка типа документа в ИБСО: {}", marshalDocument(document));
+        Document resultDoc = directABSService.request(document);
+        logger.info("Ответ на отправку типа документа в ИБСО: {}", resultDoc);
+    }
+
+    private void sendDocumentToIbso(String objectId, String clientId, String fileName, String username, String contextId) {
+        Document document = createDocument("OperationInteraction");
+        document.setUser(username);
+        document.setContextId(contextId);
+        ReqCallOper reqCallOper = new ReqCallOper();
+        reqCallOper.setObjectId(clientId);
+        reqCallOper.setOperationName("CL_PRIV_DNM_NEW_DOC");
+        reqCallOper.setActionType("execute");
+        reqCallOper.setContainingView("VW_CRIT_DNM_CL_PRIV_V");
+        ReqCallOper.Field valid = new ReqCallOper.Field();
+        valid.setName("V_VALID");
+        valid.setType("String");
+        ReqCallOper.Field documentTypeField = new ReqCallOper.Field();
+        documentTypeField.setName("DNM_ATTACH");
+        documentTypeField.setType("DNM_ATTACH_FILES");
+        ReqCallOper.Field clientField = new ReqCallOper.Field();
+        clientField.setName("P_CLIENT");
+        clientField.setValue(clientId);
+        clientField.setType("Object");
+        ReqCallOper.Field documentField = new ReqCallOper.Field();
+        documentField.setName("DNM_ATTACH");
+        documentField.setValue(String.join("///", objectId, fileName, ""));
+        documentField.setType("Memo");
+
+        reqCallOper.getField().add(documentTypeField);
+        reqCallOper.getField().add(documentField);
+        reqCallOper.getField().add(clientField);
+        reqCallOper.getField().add(valid);
+
+        document.setReqCallOper(reqCallOper);
+        logger.info("Отправка документа в ИБСО: {}", marshalDocument(document));
+        Document resultDoc = directABSService.request(document);
+
+        if (resultDoc.getFailure() != null && resultDoc.getFailure().getInfo() != null
+                && resultDoc.getFailure().getInfo().contains("В АБС не заведен пользователь")) {
+            document.setUser(USER);
+            resultDoc = directABSService.request(document);
+        }
+
+        if (resultDoc.getFailure() != null) {
+            throw new RuntimeException("Ошибка при загрузке документа в АБС: " + resultDoc.getFailure().getInfo());
+        }
+
+//        if (resultDoc.getAnsCallOper() != null && resultDoc.getAnsCallOper().getFailure() != null) {
+//            throw new RuntimeException("Ошибка при загрузке документа в АБС: " + resultDoc.getAnsCallOper().getFailure().getInfo());
+//        }
+    }
+
+    @Override
+    public List<Map<String, String>> getCardOrders() {
+        Document document = createDocument("GetViewData");
+
+        ReqGetViewData reqGetViewData = new ReqGetViewData();
+
+        ReqGetViewData.Context context = new ReqGetViewData.Context();
+        ReqGetViewData.Context.Param contextParam = new ReqGetViewData.Context.Param();
+
+        contextParam.setName("SHOW_ALL_RECORDS");
+        contextParam.setValue("VW_CRIT_PRI_ORDER_N_CARD");
+
+        context.getParam().add(contextParam);
+        reqGetViewData.setContext(context);
+
+        ReqGetViewData.View view = new ReqGetViewData.View();
+        view.setName("VW_CRIT_PRI_ORDER_N_CARD");
+        view.setClazz("PRI_ORDER_N_CARD");
+        reqGetViewData.setView(view);
+
+        document.setReqGetViewData(reqGetViewData);
+
+        Document answerDocument = directABSService.request(document);
+
+
+        return answerDocument.getAnsGetViewData().getRecords().getRecord().stream()
+                .map(record -> {
+                    Map<String, String> result = new HashMap<>();
+                    for (var column : record.getColumn()) {
+                        String name = column.getName();
+                        String value = column.getValue();
+
+                        switch (name) {
+                            case "ID" -> result.put("extId", value);
+                            case "C_NUM" -> result.put("num", value);
+                            case "C_DATE_TIME" -> result.put("localDate", value);
+                            case "C_NAME" -> result.put("status", value);
+                            case "C_NAME_1" -> result.put("client", value);
+                            case "C_CLIENT" -> result.put("clientId", value);
+                            case "C_PAYSYSTEM" -> result.put("paySystem", value);
+                            case "C_TARIF" -> result.put("tarif", value);
+                            case "C_CITY" -> result.put("city", value);
+                            case "C_OFFICE" -> result.put("office", value);
+                            case "C_LATIN_CL_NAME" -> result.put("latinClName", value);
+                            case "C_FILENAME" -> result.put("reestr", value);
+                            case "C_COMMENT" -> result.put("commentDetail", value);
+                            case "C_ISGENERATE" -> result.put("generateFlag", value);
+                            case "C_DOCS" -> result.put("value", value);
+                        }
+                    }
+                    return result;
+                })
+                .filter(map -> map.containsKey("extId"))
+                .filter(map -> "Сектор курьерской службы".equals(map.get("office")))
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<Map<String, String>> getClientDetails(String clientExtId) {
+        Document document = createDocument("CLIENT_NEW");
+        ReqFindClient reqFindClient = new ReqFindClient();
+        reqFindClient.setClientId(clientExtId);
+        document.setReqFindClient(reqFindClient);
+        Document answerDocument = null;
+
+        try {
+            logger.info("Отправка запроса на получение клиентов из ИБСО: {}", marshalDocument(document));
+            answerDocument = directABSService.request(document);
+        } catch (Exception e) {
+            logger.error("Ошибка при получении клиентов из ИБСО: {}", marshalDocument(answerDocument));
+            throw new RuntimeException("Ошибка при получении клиентов из ИБСО", e);
+        }
+
+        List<Map<String, String>> result = new ArrayList<>();
+        for (ru.dynamika.unitsplayer.model.generated.Client client : answerDocument.getAnsFindClient().getExactClients().getClient()) {
+            Map<String, String> clientMap = new HashMap<>();
+            clientMap.put("ID", client.getId());
+            clientMap.put("inn", client.getInn());
+            clientMap.put("fio", String.join(" ", client.getSurname(), client.getFirstname(), client.getMiddlename()));
+            clientMap.put("birthdate", client.getBirthdate()); //форматы: дд-мм-гггг или дд.мм.гггг
+            clientMap.put("passport", client.getMainDoc()); // Форматы: "1111 222222" или "1111222222"
+            clientMap.put("mainContact", client.getMainContact());
+            result.add(clientMap);
+        }
+        return result;
+    }
+
+    public String getClientPhoneById(String clientExtId) {
+        List<Map<String, String>> clientDetailsList = getClientDetails(clientExtId);
+
+        if (clientDetailsList != null && !clientDetailsList.isEmpty()) {
+            Map<String, String> clientMap = clientDetailsList.get(0);
+
+            String phone = clientMap.get("mainContact");
+
+            if (StringUtils.hasText(phone)) {
+                return phone;
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public void sendCardToOeb(String objectId, String username, String contextId, String status, String idComunda, String clientId) {
+
+        Document document = createDocument("OperationInteraction");
+        document.setUser(username);
+        document.setContextId(contextId);
+
+        ReqCallOper req = new ReqCallOper();
+        req.setObjectId(objectId);
+        req.setOperationName("PRI_ORDER_N_CARD_O_CARD_TO_OEB");
+        req.setActionType("execute");
+        req.setContainingView("VW_CRIT_PRI_ORDER_N_CARD");
+
+        ReqCallOper.Field statusField = new ReqCallOper.Field();
+        statusField.setName("P_STATUS");
+        statusField.setValue(status);
+        statusField.setType("Object");
+
+        ReqCallOper.Field comundaField = new ReqCallOper.Field();
+        comundaField.setName("P_ID_COMUNDA");
+        comundaField.setValue(idComunda);
+        comundaField.setType("String");
+
+        ReqCallOper.Field clientField = new ReqCallOper.Field();
+        clientField.setName("P_CLIENT");
+        clientField.setValue(clientId);
+        clientField.setType("Object");
+
+        ReqCallOper.Field rejectionField = new ReqCallOper.Field();
+        rejectionField.setName("P_REJECTION");
+        rejectionField.setValue("");
+        rejectionField.setType("String");
+
+        req.getField().add(statusField);
+        req.getField().add(comundaField);
+        req.getField().add(clientField);
+        req.getField().add(rejectionField);
+
+        document.setReqCallOper(req);
+        Document result = directABSService.request(document);
+        if (result.getFailure() != null && result.getFailure().getInfo() != null) {
+            throw new RuntimeException("Ошибка: " + result.getFailure().getInfo());
+        }
+
+        if (result.getAnsCallOper() != null && result.getAnsCallOper().getFailure() != null) {
+            if (result.getAnsCallOper().getFailure().getInfo() != null) {
+                throw new RuntimeException("Ошибка операции: " + result.getAnsCallOper().getFailure().getInfo());
+            }
+        }
+    }
+
+    @Override
+    public List<DownloadedIbsoFile> downloadCardReestr(String objectId, String username, String contextId,
+                                                       String latinClName) {
+        List<DownloadedIbsoFile> downloadedFiles = new ArrayList<>();
+
+        Document document = sendCardReestrStep("execute", objectId, username, contextId, latinClName, null);
+        processPendingCalls(document, objectId, username, contextId, downloadedFiles);
+
+        if (downloadedFiles.isEmpty()) {
+            throw new RuntimeException("ИБСО не вернул файлы реестра");
+        }
+        return downloadedFiles;
+    }
+}
+
