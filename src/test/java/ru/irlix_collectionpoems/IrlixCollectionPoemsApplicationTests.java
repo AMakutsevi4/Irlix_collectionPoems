@@ -921,5 +921,38 @@ ru.dynamika.unitsplayer.service.ServiceException: 403 : "Ошибка при о�
                 && document.getAnsCallOper().getCalls() != null
                 && !document.getAnsCallOper().getCalls().getCall().isEmpty();
     }
+
+
+
+	x.[NUM_DOG]              : C_NUM_DOG,
+x.[DATE_BEGIN]           : C_DATE_BEGIN,
+x.[VID_OPER].[NAME]      : C_VID_OPER_NAME,
+x.[COM_STATUS].[NAME]    : C_STATUS_NAME,
+nvl(x.[CLIENT].[NAME], x.[SHORT].[NAME]) : C_CLIENT,
+
+-- ТЗ: общая масса, граммы = сумма лигатурной массы слитков
+(select bars(sum(bars.[BAR].[LIGATURE_MASS]) : mass)
+ in oper.[LIST_RICHES])  : C_TOTAL_MASS,
+
+-- ТЗ: тип слитка → металл (как VW_CRIT_TR_BAR: VALUTA → имя)
+(select ft(min(ft.[NAME]) : metal)
+ in ::[FINTOOL] all
+ where ft =
+   (select bars(min(bars.[BAR].[BAR_TYPE].[VALUTA]) : v)
+    in oper.[LIST_RICHES])
+)                        : C_METAL,
+
+x.[CREATE_USER].[NAME]   : C_CREATE_USER,
+x.[DEPART].[NAME]        : C_DEPART
+
+
+	, x.[METAL].[CUR_SHORT] || ' ' ||
+  (select ft(min(ft.[NAME]) : metal)
+   in ::[FINTOOL] all
+   where ft =
+     (select bars(min(bars.[BAR].[BAR_TYPE].[VALUTA]) : v)
+      in oper.[LIST_RICHES])
+  ) : C_METAL_CS
+	
 }
 
